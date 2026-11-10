@@ -1,0 +1,16 @@
+.gradle/
+build/
+out/
+.idea/
+*.iml
+.DS_Store
+
+# Local database and secrets
+data/
+.env
+.env.*
+!.env.example
+*.log
+
+# Keep the Gradle Wrapper jar in version control.
+!gradle/wrapper/gradle-wrapper.jar
