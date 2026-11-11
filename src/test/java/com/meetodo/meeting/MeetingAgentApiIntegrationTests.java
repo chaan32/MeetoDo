@@ -39,6 +39,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles({"local", "openai"})
 @TestPropertySource(properties = {
         "spring.ai.openai.api-key=integration-test-key",
+        "NOTIFIER_TYPE=none",
         "spring.datasource.url=jdbc:h2:mem:meeting-agent-api-test",
         "spring.jpa.hibernate.ddl-auto=create-drop"
 })
@@ -441,7 +442,7 @@ class MeetingAgentApiIntegrationTests {
         submitStageA("백엔드팀 지영 담당 API 수정")
                 .andExpect(jsonPath("$.tasks[0].assigneeTeam").value("백엔드팀"));
         assertThat(logs.findAll().stream().filter(l -> l.getToolName().equals("findMember")).findFirst().orElseThrow().getResult())
-                .contains("team을 함께 넣어 다시 조회");
+                .contains("team=백엔드팀으로 재조회하세요");
     }
 
     // 검증: 팀 문맥이 없는 동명이인은 AMBIGUOUS 사유와 경고로 미정 등록한다.
@@ -628,6 +629,7 @@ class MeetingAgentApiIntegrationTests {
                 .andReturn().getResponse().getContentAsString();
         long id = new ObjectMapper().readTree(body).path("meetingId").asLong();
         var history = logs.findAllByMeetingIdOrderByCallOrderAsc(id);
+        assertThat(history.getFirst().getResult()).contains("회의록에서 후보 팀(백엔드팀, 디자인팀)이 언급되지 않았습니다.", "unassigned:AMBIGUOUS로 등록하세요.");
         assertThat(history.get(1).getErrorCode()).isEqualTo("TEAM_NOT_IN_TRANSCRIPT");
         assertThat(history.get(1).getResult()).contains("TEAM_NOT_IN_TRANSCRIPT");
         assertThat(tasks.count()).isZero();

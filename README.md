@@ -107,7 +107,7 @@ TaskMention은 기존 개발 데이터에 대해 백필하지 않습니다. 로�
 
 ## 다음 단계
 
-Slack Block Kit 알림과 매일 아침 워크플로를 진행합니다. 회의 처리 시간·LLM 호출 횟수·도구별 시간·검증 실패 비율은 실제로 수집하고 개선 전 기준값을 먼저 확보합니다.
+Slack Block Kit·Discord embed 알림을 구현했으며 실제 채널 확인 후 매일 아침 워크플로를 진행합니다. 회의 처리 시간·LLM 호출 횟수·도구별 시간·검증 실패 비율은 실제로 수집하고 개선 전 기준값을 먼저 확보합니다.
 
 ## 버전 근거
 
@@ -154,3 +154,49 @@ findMember에 team을 전달하면 서버가 현재 Meeting.rawText에 팀 이�
 - 단일 후보 조회 이력은 회의 단위이며 작업별로 팀과 사람을 연결하지 않는다. 기존 보수적 팀 불일치 가드와 동시 Task 등록 등의 한계도 유지한다.
 
 A 적용 후 실측은 이번 회의록 팀 대조·표기 정규화·단일 후보 권한 수정까지 반영한 상태를 기준으로 한다. B는 아직 진행하지 않았다. 실행·확인 방법은 [teamEvidenceFixDone.md](teamEvidenceFixDone.md)에 있다.
+
+
+## 단계 C — AMBIGUOUS 메시지에 후보 팀 언급 정보 제공
+
+팀 없는 다중 후보 조회에서 서버가 기존 TeamNames 정규화·부분 문자열 비교를 재사용해 후보 팀의 회의록 언급 여부를 계산한다. 정규화한 서로 다른 팀을 기준으로, 0개는 unassigned:AMBIGUOUS 등록, 1개는 team을 넣은 재조회, 여러 개는 중립적 문맥 확인을 안내한다. 후보 데이터 구조와 단일 후보 권한·TEAM_NOT_IN_TRANSCRIPT·TEAM_MISMATCH 가드·findTasks 필수 호출은 유지한다. 같은 팀에서도 동명이인이 남으면 단일 후보로 취급하지 않는다.
+
+목표는 정확도를 유지하며 모델의 불필요한 재조회와 오류 복구를 줄이는 것이다. 자동 테스트 131개가 통과했고, A·C 각 입력 3회 실측 원값과 평균을 DEVLOG에 기록했다. 표본이 작고 C 미정 경로에서 findTasks 생략도 함께 관측돼 메시지 단독 효과나 일반화된 성능 개선을 단정하지 않는다. 지영 A 2·3회차의 실패 코드는 미확인으로 유지한다. B는 보류하며 기존 알려진 한계도 유지한다. [memberTeamHintStepCDone.md](memberTeamHintStepCDone.md)에 변경·확인 방법을 정리했다.
+
+
+## 현재 실제 동작 — findTasks 지시와 관측 차이
+
+정책·시스템 프롬프트는 여전히 findTasks 필수 호출을 지시하지만, C의 지영 미정 실측 3회는 모두 findMember → createTask였고 findTasks를 생략했다. 호출 순서는 서버가 강제하지 않는다. createTask는 독립적으로 담당자 미정(null) + 정규화 제목 + TODO를 검사하므로 순차 요청의 중복 검사는 유지된다. 기존 서비스/H2 테스트 11개를 재실행해 통과를 확인했다. 동시 등록 경쟁 한계는 그대로다.
+
+이 관찰을 B의 선택 호출 정책 검토 근거로 기록했으며, 현재 정책은 변경하지 않았다. A 지영 2·3회차의 실패 코드는 여전히 미확인이다. C 실측 원값·평균·검증 근거는 DEVLOG에 있다.
+
+
+## 회의 완료 알림 — Slack / Discord
+
+알림은 모델 도구가 아니라 서버의 완료 후속 처리다. Meeting DONE/FAILED 저장과 이벤트 발행을 짧은 트랜잭션으로 묶고, AFTER_COMMIT 동기 리스너가 단일 메시지를 전송한다. 알림 결과는 REQUIRES_NEW 트랜잭션으로 저장한다. 전송 실패가 Meeting DONE을 FAILED로 바꾸지 않는다. 기존 processingTimeMs는 회의 처리 시간이며, 알림 대기 시간은 포함하지 않는다. API 응답 시간에는 알림 대기가 더해질 수 있다.
+
+Notifier 인터페이스로 설계해서 두레이 같은 사내 메신저도 구현체 추가로 연결할 수 있다. 두레이는 이번에 구현하지 않았다. Slack 생성 장애로 Discord로 먼저 검증한다. 사용자는 Discord 웹훅 자체 연결을 확인했으며, 이 서비스의 실제 메시지 표시는 사용자 확인 단계다. 최종 데모는 Slack을 사용한다.
+
+- 실제 전송: local & openai & !test + NOTIFIER_TYPE(slack/discord) + 해당 URL 환경변수가 모두 있어야 한다. 기본 local만 실행하거나 test 프로필이면 실제 전송하지 않는다.
+- notificationStatus: PENDING / SENT / FAILED / SKIPPED. notificationType, notificationErrorCode, notifiedAt도 조회 응답에 제공한다. notifiedAt은 공급자 성공 응답 시각이며 사람이 읽었다는 뜻은 아니다.
+- URL이나 활성화 조건이 없으면 SKIPPED / NOT_CONFIGURED. 과거 데이터의 알림 상태가 null이면 SKIPPED / NOT_ATTEMPTED로 표시하며 과거 회의를 자동 전송하지 않는다.
+- 동일 본문 재전송은 기존 결과와 기존 알림 상태를 반환하며 추가 전송하지 않는다. 같은 Task 묶음인 새 Meeting은 원본 ID와 건수를 짧게 알린다. Meeting FAILED는 일반화된 짧은 실패 알림을 보낸다.
+- summary는 LLM 문장을 사용하지 않고 서버 tasks의 신규·기존·미정 건수로 조립한다. 이름·팀 텍스트, 마감일, CREATED/EXISTING, N번째 언급, 경고를 표시한다. 실제 사용자 멘션은 아직 사용하지 않는다.
+- 항상 메시지 1건이다. 전체 목록이 들어가면 전부 넣는다. 넘으면 생략 안내와 footer 공간을 확보해 앞에서부터 들어가는 완전한 항목만 넣고 '외 N건은 GET /api/meetings/{id}에서 확인'을 붙인다. Slack은 Block Kit/section/fallback 제한, Discord는 단일 embed description 및 전체 문자 제한을 적용한다. 중간 항목만 건너뛰거나 할 일 문자열을 반으로 자르지 않는다.
+- 연결 타임아웃 1초 / 요청 타임아웃 3초, 자동 재시도 없음. **타임아웃 시 이미 전송됐을 수 있어 중복 알림 위험이 있으므로, 중복보다 누락을 택하고 FAILED로 남김**(TIMEOUT_DELIVERY_UNKNOWN). 이는 실제 미전송을 확정했다는 뜻은 아니다.
+- **정확히 한 번 전달은 보장하지 않음. 향후 Outbox 패턴으로 개선 가능.** 커밋 후 프로세스 종료나 상태 저장 장애 시 PENDING이 남을 수 있다. Outbox 역시 외부 공급자 중복 수신까지 자동 해결하는 것은 아니며 별도 멱등성 검토가 필요하다. 현재 재전송 API는 없다.
+- URL·HTTP 응답 본문·예외 원문은 기록하지 않는다. 실패 로그는 Meeting ID와 안전한 코드만 기록한다. ToolCallLog의 Slack/Discord 웹훅 URL 형태도 마스킹한다.
+
+macOS 키체인에서 환경변수로 읽어 실행한다. .env.example은 변수 이름 안내이며 자동 로드되지 않는다.
+
+```zsh
+export OPENAI_API_KEY="$(security find-generic-password -a "$USER" -s meetodo-openai -w)"
+export DISCORD_WEBHOOK_URL="$(security find-generic-password -a "$USER" -s meetodo-discord-webhook -w)"
+export NOTIFIER_TYPE=discord
+export OPENAI_CHAT_MODEL=gpt-4o-mini
+./gradlew bootRun --args='--spring.profiles.active=local,openai'
+```
+
+확인 시나리오·예상 메시지·잘림 기준·공식 문서 근거는 [fourthStepDone.md](fourthStepDone.md)에 있다. 자동 테스트는 mock LLM과 loopback HTTP 서버만 사용한다.
+
+
+4단계 자동 검증: 전체 182개 테스트, 실패·오류·건너뜀 0 및 bootJar 성공. 실제 Slack·Discord 서비스 통합 전송은 사용자가 확인한다. 작업 중 발견한 ToolCallLog 웹훅 URL 마스킹 누락과 단일 메시지 잘림 경계 수정은 DEVLOG에 기록했다.

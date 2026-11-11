@@ -1,6 +1,8 @@
 package com.meetodo.tools;
 
 import java.util.Map;
+import java.util.List;
+import java.util.LinkedHashMap;
 
 import com.meetodo.member.Member;
 import com.meetodo.member.MemberRepository;
@@ -57,9 +59,26 @@ public class FindMemberTool {
                 candidates = matchingTeam;
             }
             String data = candidates.stream().map(this::toData).collect(java.util.stream.Collectors.joining(",", "[", "]"));
-            if (candidates.size() > 1) return ToolResult.success("AMBIGUOUS: 동명이인이 있습니다. 회의록에 팀이 언급되어 있으면 team을 함께 넣어 다시 조회하세요. 언급이 없으면 담당자 미정으로 처리하세요. 같은 팀에서도 여러 명이면 확정하지 마세요.", data);
+            if (candidates.size() > 1) return ToolResult.success(team == null
+                    ? ambiguousMessage(candidates, meeting.getRawText())
+                    : "AMBIGUOUS: 동명이인이 있습니다. 같은 팀에서도 여러 명이면 확정하지 마세요. unassigned:AMBIGUOUS로 등록하세요.", data);
             return ToolResult.success(candidates.getFirst().getName() + " 팀원을 찾았습니다.", data);
         });
+    }
+
+    private String ambiguousMessage(List<Member> candidates, String transcript) {
+        Map<String, String> teams = new LinkedHashMap<>();
+        for (Member candidate : candidates)
+            teams.putIfAbsent(TeamNames.normalize(candidate.getTeam()), candidate.getTeam());
+        List<String> mentioned = teams.values().stream()
+                .filter(team -> TeamNames.mentionedIn(team, transcript)).toList();
+        if (mentioned.isEmpty())
+            return "AMBIGUOUS: 회의록에서 후보 팀(" + String.join(", ", teams.values())
+                    + ")이 언급되지 않았습니다. unassigned:AMBIGUOUS로 등록하세요.";
+        if (mentioned.size() == 1)
+            return "AMBIGUOUS: 회의록에 " + mentioned.getFirst() + "이 언급되어 있습니다. team="
+                    + mentioned.getFirst() + "으로 재조회하세요.";
+        return "AMBIGUOUS: 회의록에 여러 후보 팀이 언급되어 있습니다. 문맥으로 확실히 구분할 수 없으면 unassigned:AMBIGUOUS로 등록하세요.";
     }
 
     private String toData(Member member) {

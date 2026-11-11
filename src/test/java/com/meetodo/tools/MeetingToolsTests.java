@@ -364,6 +364,70 @@ class MeetingToolsTests {
         assertThat(findMember.findMember("지영", "백엔드팀", meeting).errorCode()).isEqualTo("TEAM_NOT_IN_TRANSCRIPT");
     }
 
+    // 검증: 후보 팀 언급이 없으면 미정 등록을 직접 안내하고 후보 정보는 유지한다.
+    @Test
+    void ambiguousWithoutMentionedCandidateTeamsGuidesUnassigned() {
+        stubAmbiguousJiyoung();
+        ToolResult result = findMember.findMember("지영", Meeting.create("지영은 회의실 예약을 확인한다.", MeetingSource.API_TEXT));
+        assertThat(result.message()).isEqualTo("AMBIGUOUS: 회의록에서 후보 팀(백엔드팀, 디자인팀)이 언급되지 않았습니다. unassigned:AMBIGUOUS로 등록하세요.");
+        assertThat(result.success()).isTrue();
+        assertThat(result.data()).contains("백엔드팀", "디자인팀");
+    }
+
+    // 검증: 후보 팀 하나만 언급되면 그 팀의 명시적 재조회를 안내하되 다중 후보 정보는 유지한다.
+    @Test
+    void ambiguousWithOneMentionedCandidateTeamGuidesTeamLookup() {
+        stubAmbiguousJiyoung();
+        ToolResult result = findMember.findMember("지영", Meeting.create("백엔드 지영은 API를 수정한다.", MeetingSource.API_TEXT));
+        assertThat(result.message()).isEqualTo("AMBIGUOUS: 회의록에 백엔드팀이 언급되어 있습니다. team=백엔드팀으로 재조회하세요.");
+        assertThat(result.data()).contains("백엔드팀", "디자인팀");
+    }
+
+    // 검증: 여러 후보 팀이 등장하면 특정 팀을 선택하도록 유도하지 않는다.
+    @Test
+    void ambiguousWithMultipleMentionedCandidateTeamsGivesNeutralGuidance() {
+        stubAmbiguousJiyoung();
+        ToolResult result = findMember.findMember("지영", Meeting.create("백엔드팀과 디자인팀 합동 회의. 지영 담당 확인", MeetingSource.API_TEXT));
+        assertThat(result.message()).isEqualTo("AMBIGUOUS: 회의록에 여러 후보 팀이 언급되어 있습니다. 문맥으로 확실히 구분할 수 없으면 unassigned:AMBIGUOUS로 등록하세요.");
+    }
+
+    // 검증: 정규화 후 같은 팀은 후보 인원 수와 무관하게 한 팀으로 계산한다.
+    @Test
+    void ambiguousCountsDistinctNormalizedTeamsRatherThanMembers() {
+        when(members.findAllByNameOrderByIdAsc("지영")).thenReturn(List.of(
+                new Member("지영", "BACKEND팀", "U-1"), new Member("지영", "back end", "U-2"),
+                new Member("지영", "디자인팀", "U-3")));
+        ToolResult result = findMember.findMember("지영", Meeting.create("backend 지영은 작업한다.", MeetingSource.API_TEXT));
+        assertThat(result.message()).isEqualTo("AMBIGUOUS: 회의록에 BACKEND팀이 언급되어 있습니다. team=BACKEND팀으로 재조회하세요.");
+        assertThat(result.data()).contains("U-1", "U-2", "U-3");
+    }
+
+    // 검증: 팀까지 지정했는데 동명이인이 남으면 반복 재조회 대신 기존 확정 불가 안내를 유지한다.
+    @Test
+    void explicitTeamStillAmbiguousKeepsSameTeamWarning() {
+        when(members.findAllByNameOrderByIdAsc("지영")).thenReturn(List.of(
+                new Member("지영", "백엔드팀", "U-1"), new Member("지영", "백엔드팀", "U-2")));
+        ToolResult result = findMember.findMember("지영", "백엔드팀", Meeting.create("백엔드팀 지영 담당", MeetingSource.API_TEXT));
+        assertThat(result.message()).contains("같은 팀에서도 여러 명이면 확정하지 마세요");
+    }
+
+    private void stubAmbiguousJiyoung() {
+        when(members.findAllByNameOrderByIdAsc("지영")).thenReturn(List.of(
+                new Member("지영", "백엔드팀", "U-BACKEND"), new Member("지영", "디자인팀", "U-DESIGN")));
+    }
+
+    // 검증: 도구 인자·결과에 섞인 Slack/Discord 웹훅 자격 증명도 기록 전에 마스킹한다.
+    @Test
+    void redactsWebhookUrlsFromToolArgumentsAndResults() {
+        String slack = "https://hooks.slack.com/services/SECRET/WEBHOOK/TOKEN";
+        String discord = "https://discord.com/api/webhooks/123/SECRET-TOKEN";
+        execution.execute(testMeeting, "test", Map.of("url", slack), () -> ToolResult.success("ok", discord));
+        var captor = org.mockito.ArgumentCaptor.forClass(ToolCallLog.class);
+        verify(logs).save(captor.capture());
+        assertThat(captor.getValue().getArguments()).doesNotContain(slack, "SECRET").contains("[REDACTED]");
+        assertThat(captor.getValue().getResult()).doesNotContain(discord, "SECRET-TOKEN").contains("[REDACTED]");
+    }
+
     private void assertInvalidToken(String token) {
         ToolResult result = createTask.createTask("API 확인", token, null, testMeeting);
         assertThat(result.errorCode()).isEqualTo("INVALID_ASSIGNEE");

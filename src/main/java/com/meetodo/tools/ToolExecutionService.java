@@ -21,6 +21,7 @@ public class ToolExecutionService {
     private static final Pattern BEARER = Pattern.compile("(?i)Bearer\\s+[A-Za-z0-9._~+/-]+=*");
     private static final Pattern AUTH_FIELD = Pattern.compile("(?i)(\\\"?(?:authorization|api[_-]?key)\\\"?\\s*[:=]\\s*\\\")[^\\\"]*(\\\")");
     private static final String REDACTED = "[REDACTED]";
+    private static final Pattern WEBHOOK = Pattern.compile("(?i)https?://(?:hooks\\.slack\\.com/services|(?:canary\\.|ptb\\.)?discord(?:app)?\\.com/api(?:/v\\d+)?/webhooks)/[^\\s\"<>\\\\]+");
     public static final String MEETING_CONTEXT_KEY = "meeting";
 
     private final ToolCallLogRepository logs;
@@ -137,7 +138,8 @@ public class ToolExecutionService {
     private String sanitize(String value, String meetingText) {
         if (value == null) return null;
         if (meetingText != null && !meetingText.isBlank()) value = value.replace(meetingText, REDACTED);
-        String redacted = OPENAI_KEY.matcher(value).replaceAll(REDACTED);
+        String redacted = WEBHOOK.matcher(value).replaceAll(REDACTED);
+        redacted = OPENAI_KEY.matcher(redacted).replaceAll(REDACTED);
         redacted = BEARER.matcher(redacted).replaceAll("Bearer " + REDACTED);
         return AUTH_FIELD.matcher(redacted).replaceAll("$1" + REDACTED + "$2");
     }

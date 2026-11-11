@@ -80,6 +80,17 @@ class MeetingApiTests {
                 .andExpect(jsonPath("$.summary").value("요약"));
     }
 
+    // 검증: 실제 전송 빈이 없는 테스트 프로필은 DONE을 보존하고 알림을 SKIPPED로 응답한다.
+    @Test
+    void completesWithoutNotifierAndReturnsSkippedNotificationStatus() throws Exception {
+        when(agent.process(any(Meeting.class))).thenReturn(new AgentResult("완료", 1, 0, 0));
+        mvc.perform(post("/api/meetings").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"rawText\":\"알림 비활성 확인 회의\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DONE"))
+                .andExpect(jsonPath("$.notificationStatus").value("SKIPPED"));
+    }
+
     // 검증: rejectsBlankAndOversizedMeetingTextAsValidationErrors 시나리오의 기대 동작을 확인한다.
     @Test
     void rejectsBlankAndOversizedMeetingTextAsValidationErrors() throws Exception {

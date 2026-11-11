@@ -1,6 +1,7 @@
 package com.meetodo.meeting;
 
 import java.time.Duration;
+import com.meetodo.notification.NotificationStatus;
 import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -69,6 +70,19 @@ public class Meeting {
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "notification_status", length = 20)
+    private NotificationStatus notificationStatus;
+
+    @Column(name = "notification_type", length = 20)
+    private String notificationType;
+
+    @Column(name = "notification_error_code", length = 40)
+    private String notificationErrorCode;
+
+    @Column(name = "notified_at")
+    private Instant notifiedAt;
 
     protected Meeting() {
     }
@@ -144,6 +158,33 @@ public class Meeting {
     private void requireStatus(MeetingStatus expected) {
         if (status != expected) throw new IllegalStateException("Meeting must be " + expected);
     }
+
+    public void prepareNotification(String type) {
+        if (status != MeetingStatus.DONE && status != MeetingStatus.FAILED)
+            throw new IllegalStateException("Meeting must be terminal before notification");
+        if (notificationStatus != null) throw new IllegalStateException("Notification already prepared");
+        notificationType = type;
+        notificationStatus = type == null ? NotificationStatus.SKIPPED : NotificationStatus.PENDING;
+        notificationErrorCode = type == null ? "NOT_CONFIGURED" : null;
+    }
+
+    public void notificationSent(Instant at) {
+        if (notificationStatus != NotificationStatus.PENDING) throw new IllegalStateException("Notification must be pending");
+        notificationStatus = NotificationStatus.SENT;
+        notifiedAt = at;
+        notificationErrorCode = null;
+    }
+
+    public void notificationFailed(String code) {
+        if (notificationStatus != NotificationStatus.PENDING) throw new IllegalStateException("Notification must be pending");
+        notificationStatus = NotificationStatus.FAILED;
+        notificationErrorCode = code;
+    }
+
+    public NotificationStatus getNotificationStatus() { return notificationStatus == null ? NotificationStatus.SKIPPED : notificationStatus; }
+    public String getNotificationType() { return notificationType; }
+    public String getNotificationErrorCode() { return notificationStatus == null ? "NOT_ATTEMPTED" : notificationErrorCode; }
+    public Instant getNotifiedAt() { return notifiedAt; }
 
     public Long getId() { return id; }
     public String getRawText() { return rawText; }

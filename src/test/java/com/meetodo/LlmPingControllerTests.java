@@ -35,6 +35,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // Simulates dev profiles with a mock replacing the provider bean. No real LLM calls.
 @SpringBootTest(properties = {
         "spring.ai.openai.api-key=test-key-not-a-secret",
+        "NOTIFIER_TYPE=none",
         "spring.datasource.url=jdbc:h2:mem:llm-ping-test"
 })
 @AutoConfigureMockMvc

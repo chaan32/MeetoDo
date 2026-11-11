@@ -41,4 +41,8 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+    // Local credentials must not enable real webhook transports in profile-matrix tests.
+    environment 'NOTIFIER_TYPE', 'none'
+    environment 'SLACK_WEBHOOK_URL', ''
+    environment 'DISCORD_WEBHOOK_URL', ''
 }
