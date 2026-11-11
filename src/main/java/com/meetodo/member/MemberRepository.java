@@ -1,0 +1,10 @@
+package com.meetodo.member;
+
+import java.util.List;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface MemberRepository extends JpaRepository<Member, Long> {
+    List<Member> findAllByNameOrderByIdAsc(String name);
+    boolean existsBySlackUserId(String slackUserId);
+}

@@ -1,5 +1,11 @@
 spring:
+  config:
+    activate:
+      on-profile: "local & openai & !test"
   ai:
+    retry:
+      # A connectivity check makes one attempt so failures are visible promptly.
+      max-attempts: 1
     model:
       chat: openai
     openai:
@@ -7,3 +13,10 @@ spring:
       chat:
         options:
           model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
+
+# Spring AI 1.1.8 logs provider error bodies in its retry listener and full
+# prompts when a chat response has no choices. Suppress those two loggers.
+logging:
+  level:
+    org.springframework.ai.retry.autoconfigure.SpringAiRetryAutoConfiguration: OFF
+    org.springframework.ai.openai.OpenAiChatModel: OFF

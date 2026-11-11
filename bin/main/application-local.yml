@@ -1,0 +1,13 @@
+# Local development only. The database remains under ./data after restart.
+server:
+  address: 127.0.0.1
+
+spring:
+  datasource:
+    url: jdbc:h2:file:./data/meetodo
+    username: sa
+    password: ''
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update

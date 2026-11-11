@@ -18,6 +18,7 @@ import static org.mockito.Mockito.when;
 
 class ChatClientMockTests {
 
+    // 검증: usesMockModelInsteadOfCallingOpenAi 시나리오의 기대 동작을 확인한다.
     @Test
     void usesMockModelInsteadOfCallingOpenAi() {
         ChatModel model = mock(ChatModel.class);
