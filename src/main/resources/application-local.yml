@@ -8,6 +8,10 @@ spring:
     username: sa
     password: ''
     driver-class-name: org.h2.Driver
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/local/slack-message-dm-upgrade.sql
   jpa:
     hibernate:
       ddl-auto: update

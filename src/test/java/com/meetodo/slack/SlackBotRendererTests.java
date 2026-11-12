@@ -69,4 +69,21 @@ class SlackBotRendererTests {
         assertThat(result.text()).contains("수진").doesNotContain("준호");
     }
 
+    @Test void directMessageKeepsOriginalChannelLinkWithinBlockBudget() {
+        // DM도 같은 길이 제한을 지키며 원래 채널 링크를 생략하지 않는다.
+        var result = renderer.renderDirectMessage(message, java.util.Collections.nCopies(100, task("U123ABC")), java.util.Map.of(),
+                "https://meetodo.slack.com/archives/C1/p123");
+        assertThat(result.blocks()).hasSizeLessThanOrEqualTo(50);
+        assertThat(result.text()).hasSizeLessThanOrEqualTo(40000).contains("새 할 일이 배정됐어요", "외 ", "<https://meetodo.slack.com/archives/C1/p123|원래 채널 메시지>");
+    }
+    @Test void directMessageKeepsDetailedWarningAndDueDate() {
+        // DM 조립도 회의 결과의 상세 경고와 마감일 없음 표시를 유지한다.
+        Task task = Task.create("자료 준비", null, null);
+        ReflectionTestUtils.setField(task, "id", 7L);
+        var detail = com.meetodo.meeting.dto.MeetingTaskResponse.from(task,"CREATED",1,"동명이인 확인 필요: 지영", "AMBIGUOUS");
+        var result = renderer.renderDirectMessage(message,List.of(task),java.util.Map.of(7L,detail),
+                "https://meetodo.slack.com/archives/C1/p123");
+        assertThat(result.text()).contains("동명이인 확인 필요: 지영", "마감일 없음");
+    }
+
 }

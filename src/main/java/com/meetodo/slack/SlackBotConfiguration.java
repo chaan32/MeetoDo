@@ -29,7 +29,9 @@ public class SlackBotConfiguration {
     @Bean SlackBotService slackBotService(MethodsClient client, Environment env, SlackMessageReferenceRepository refs,
             TaskRepository tasks, TaskService service, MeetingResults results, MeetingRepository meetings,
             ObjectMapper mapper, PlatformTransactionManager manager) {
-        return new SlackBotService(client, env.getProperty("SLACK_CHANNEL_ID"), refs, tasks, service, results, meetings, mapper, manager);
+        SlackBotService bot = new SlackBotService(client, env.getProperty("SLACK_CHANNEL_ID"), refs, tasks, service, results, meetings, mapper, manager);
+        bot.setDmEnabled(env.getProperty("MEETODO_SLACK_DM_ENABLED", Boolean.class, false));
+        return bot;
     }
     @Bean @Conditional(BotNotifierConfigured.class)
     Notifier slackBotNotifier(SlackBotService service) {

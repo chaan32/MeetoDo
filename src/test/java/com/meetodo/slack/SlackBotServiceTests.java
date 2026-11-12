@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+@org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
 class SlackBotServiceTests {
     final MethodsClient client = mock(MethodsClient.class);
     final SlackMessageReferenceRepository refs = mock(SlackMessageReferenceRepository.class);
@@ -55,6 +56,14 @@ class SlackBotServiceTests {
         assertThat(request.getValue().isUnfurlMedia()).isFalse();
         verify(transactions).commit(any());
     }
+    @Test void slackReturnedMissingScopeIsPreserved() throws Exception {
+        // 실제 발견한 missing_scope를 INTERNAL_ERROR로 덮어쓰지 않는다.
+        var response = new ChatPostMessageResponse(); response.setError("missing_scope");
+        when(client.chatPostMessage(any(ChatPostMessageRequest.class))).thenReturn(response);
+        assertThatThrownBy(() -> bot.send(message)).isInstanceOfSatisfying(NotificationDeliveryException.class,
+                failure -> assertThat(failure.getCode()).isEqualTo("missing_scope"));
+    }
+
     @Test void rejectedPostDoesNotStoreMessageReference() throws Exception {
         // 전송에 실패한 메시지 좌표는 저장하지 않는다.
         var response = new ChatPostMessageResponse(); response.setError("provider xoxb-secret");
@@ -107,17 +116,16 @@ class SlackBotServiceTests {
         assertThat(request.getValue().getTs()).isEqualTo("1.2");
         assertThat(request.getValue().getBlocksAsString()).contains("완료 (<@UACTOR>)", "&lt;@UNSAFE&gt;").doesNotContain("meetodo_complete_task");
     }
-    @Test void failedUpdateDoesNotUndoCompletedTask() throws Exception {
-        // Slack 갱신 실패 후에도 이미 저장한 완료 상태를 유지하고 안내한다.
+    @Test void failedUpdateDoesNotUndoCompletedTask(org.springframework.boot.test.system.CapturedOutput output) throws Exception {
+        // Slack 갱신 실패 후에도 완료는 유지하며 비밀값 없이 로그만 남긴다.
         when(service.completeFromSlack(7L, "UACTOR")).thenAnswer(call -> {
             task.changeStatus(TaskStatus.DONE, "UACTOR", java.time.Instant.EPOCH); return null;
         });
         when(client.chatUpdate(any(ChatUpdateRequest.class))).thenThrow(new java.io.IOException("secret provider body"));
         bot.complete("C1", "1.2", "UACTOR", "7");
         assertThat(task.getStatus()).isEqualTo(TaskStatus.DONE);
-        var request = ArgumentCaptor.forClass(ChatPostEphemeralRequest.class);
-        verify(client).chatPostEphemeral(request.capture());
-        assertThat(request.getValue().getText()).contains("완료 상태는 저장").doesNotContain("secret", "provider");
+        verify(client, never()).chatPostEphemeral(any(ChatPostEphemeralRequest.class));
+        assertThat(output.getAll()).contains("Slack message refresh failed: INTERNAL_ERROR").doesNotContain("secret provider body");
     }
     @Test void missingStoredTaskOnlyRepliesEphemerally() throws Exception {
         // 메시지 목록에 있더라도 DB에서 사라진 Task는 완료나 갱신을 가장하지 않는다.

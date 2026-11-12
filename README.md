@@ -327,6 +327,19 @@ docker compose --profile replica up -d --wait
 - V2가 Task 완료 정보, Meeting Slack 위치, Slack 메시지 참조를 추가한다. 기존 DONE의 완료자·시각은 추정 백필하지 않는다. local ddl-auto=update, docker는 Flyway V2로 적용하므로 정상 기존 DB를 초기화할 필요가 없다.
 - local 개발 샘플 전해찬은 DEV_SLACK_USER_ID 실제 ID를 지정하면 기존 행에도 적용한다. 새 DB에서 생략하면 U-DEV-HAECHAN이다. 기존 실제 ID는 환경변수를 생략해도 지우지 않는다. 같은 전체 이름·팀 후보가 여러 명이면 임의로 바꾸지 않는다.
 
-[Slack 봇 단계1 확인 문서](slackBotStep1Done.md)에 키체인 실행·Docker 샘플 ID 설정·Swagger 입력·권한/완료 확인 절차와 실제 자동 테스트 결과를 정리한다. 다른 메시지 전체를 실시간으로 갱신하는 기능은 없으며, DB는 저장됐지만 Slack 갱신만 실패할 수 있다. 실제 멘션 알림 도달과 Socket 연결은 사용자가 확인한다.
+[Slack 봇 단계1 확인 문서](slackBotStep1Done.md)에 키체인 실행·Docker 샘플 ID 설정·Swagger 입력·권한/완료 확인 절차와 실제 자동 테스트 결과를 정리한다. 단계1.5에서는 관련 채널·DM을 함께 갱신한다. DB는 저장됐지만 일부 Slack 갱신만 실패할 수 있다.
 
-Slack 봇 단계1 검증: 전체 **355개 / 실패·오류·건너뜀0**, test·bootJar 성공. 실제 Slack/Socket 연결은 하지 않았으며 사용자 Swagger 실측 후 단계2로 진행한다.
+Slack 봇 단계1 검증: 전체 **355개 / 실패·오류·건너뜀0**, test·bootJar 성공. 이 자동 검증에서는 실제 Slack/Socket 연결을 하지 않았다. 이후 사용자가 실제 채널의 본인 완료·다른 사람 권한 거절·미정 완료를 확인했다. 단계1.5 확인 전 단계2로 진행하지 않는다.
+
+
+## Slack 봇 — 단계1.5 담당자 DM
+
+`MEETODO_SLACK_DM_ENABLED=true`일 때만 새 CREATED Task를 실제 Slack ID 담당자별 한 통으로 묶어 보낸다. EXISTING·미정·가짜 ID·다이제스트는 DM 대상에서 제외한다. 기존 채널 알림은 그대로이며 DM에 완료 버튼과 원래 채널 메시지 링크를 넣는다. 채널 또는 DM에서 완료하면 기존 TaskService 권한/상태 전이를 거쳐, 같은 Task가 포함된 SENT 메시지를 DB 현재 상태로 각각 갱신한다. 일부 갱신 실패는 안전한 로그만 남기고 완료를 유지한다.
+
+V3는 기존 slack_message_references에 CHANNEL/DM·대상 사용자·SENT/FAILED·오류 코드·원래 링크를 추가한다. DM 실패 전에 대화 위치를 모를 수 있어 channel/ts는 nullable이다. 기존 행은 CHANNEL/SENT로 유지하며 V1/V2는 바꾸지 않는다. local은 기존 H2 메시지 컬럼을 보정하는 멱등 SQL을 Hibernate update 전에 실행하고, docker는 Flyway V3를 적용한다. 정상 기존 데이터 초기화는 필요 없다. DM 실패는 Meeting DONE·채널 SENT를 변경하지 않는다. 채널 전송의 missing_scope/not_in_channel/channel_not_found/invalid_auth 등 알려진 안전한 Slack 코드는 notificationErrorCode에 보존하고 임의 문자열·비밀값·예외 원문은 남기지 않는다.
+
+추가 Slack 설정은 **Bot scope im:write → 재설치, App Home → Messages Tab 켜기**다. 기존 chat:write·Socket Mode·Interactivity와 채널 초대는 유지한다. DM 텍스트 수신이 없어 im:history/message.im 구독은 필요 없다. [실행 명령·Swagger JSON·DM 확인 절차·면접 질문](slackBotStep1_5Done.md)을 따른다. 기본값은 꺼짐이며 기존 웹훅·Discord 동작을 유지한다.
+
+알려진 한계: DM 전송과 DB 위치 저장·완료 후 메시지 갱신은 원자적이지 않고 자동 재시도/Outbox/정확히 한 번 전달을 보장하지 않는다. 관련 메시지 조회는 개발 규모에서 전체 SENT 참조의 Task ID를 확인하며, 커지면 Task-메시지 관계 인덱스가 필요하다. 동시 완료의 Slack 수정 순서까지 직렬화하지 않아 일부 메시지가 오래된 표시로 남을 수 있다. 단계2 /meetodo 모달은 사용자 확인 후 별도 구현한다.
+
+단계1.5 자동 검증: `./gradlew test bootJar --no-daemon` 성공, **394개 / 실패·오류·건너뜀0**. 실제 PostgreSQL22개·기존 H2 업그레이드4개 포함. MethodsClient/LLM은 mock이며 실제 DM 전달은 사용자 확인 단계다.

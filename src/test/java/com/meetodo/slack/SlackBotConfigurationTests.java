@@ -46,4 +46,21 @@ class SlackBotConfigurationTests {
         runtime.start(); runtime.close();
         verify(socket).startAsync(); verify(socket).close();
     }
+    @Test void dmFlagDefaultsToDisabledOnConfiguredService() {
+        // 봇이 켜져 있어도 DM 설정 생략 시 별도 전송 기능을 켜지 않는다.
+        assertThat(org.springframework.test.util.ReflectionTestUtils.getField(configuredBot(new MockEnvironment()), "dmEnabled")).isEqualTo(false);
+    }
+    @Test void explicitDmFlagIsWiredToService() {
+        // 환경변수의 명시적 opt-in 값이 실제 서비스에 전달된다.
+        assertThat(org.springframework.test.util.ReflectionTestUtils.getField(configuredBot(
+                new MockEnvironment().withProperty("MEETODO_SLACK_DM_ENABLED", "true")), "dmEnabled")).isEqualTo(true);
+    }
+    private SlackBotService configuredBot(MockEnvironment env) {
+        return new SlackBotConfiguration().slackBotService(mock(MethodsClient.class), env,
+                mock(SlackMessageReferenceRepository.class), mock(com.meetodo.task.TaskRepository.class),
+                mock(com.meetodo.task.TaskService.class), mock(com.meetodo.meeting.MeetingResults.class),
+                mock(com.meetodo.meeting.MeetingRepository.class), new com.fasterxml.jackson.databind.ObjectMapper(),
+                mock(org.springframework.transaction.PlatformTransactionManager.class));
+    }
+
 }

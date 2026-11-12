@@ -128,6 +128,27 @@ class MeetingNotificationTests {
         assertThat(output).doesNotContain(url, "secret-webhook-token");
     }
 
+    @Test void slackMissingScopeIsPersistedInMeetingResponse() throws Exception {
+        // Slack의 알려진 오류 코드가 실제 상태 저장 경계와 API 응답을 통과한다.
+        doThrow(new NotificationDeliveryException("missing_scope")).when(notifier).send(any());
+        submit("Slack 권한 실패 기록").andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DONE"))
+                .andExpect(jsonPath("$.notificationStatus").value("FAILED"))
+                .andExpect(jsonPath("$.notificationErrorCode").value("missing_scope"));
+    }
+
+    @Test void unsafeSlackErrorIsNeverPersistedOrLogged(CapturedOutput output) throws Exception {
+        // 공급자가 오류 필드에 토큰을 넣더라도 API·저장값·로그에 노출하지 않는다.
+        doThrow(new NotificationDeliveryException("invalid_auth xoxb-synthetic-secret")).when(notifier).send(any());
+        String response = submit("Slack 비밀 오류 거부").andExpect(status().isOk())
+                .andExpect(jsonPath("$.notificationErrorCode").value("INTERNAL_ERROR"))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(response).doesNotContain("xoxb-synthetic-secret");
+        assertThat(output).doesNotContain("xoxb-synthetic-secret");
+        assertThat(meetings.findAll()).allSatisfy(m ->
+                assertThat(m.getNotificationErrorCode()).doesNotContain("xoxb-synthetic-secret"));
+    }
+
     // 검증: 예상 밖 전송 예외의 URL·원문도 로그나 API로 내보내지 않는다.
     @Test void unexpectedExceptionIsGeneralized(CapturedOutput output) throws Exception {
         doThrow(new IllegalStateException("https://discord.com/api/webhooks/secret-webhook-token")).when(notifier).send(any());

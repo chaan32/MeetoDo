@@ -20,6 +20,21 @@ public class SlackBotRenderer {
     public Rendered render(NotificationMessage message, List<Task> tasks) { return render(message, tasks, Map.of()); }
 
     public Rendered render(NotificationMessage message, List<Task> tasks, Map<Long, MeetingTaskResponse> metadata) {
+        return render(message, tasks, metadata, null);
+    }
+
+    public Rendered renderDirectMessage(NotificationMessage message, List<Task> tasks,
+                                         Map<Long, MeetingTaskResponse> metadata, String permalink) {
+        return render(new NotificationMessage(message.meetingId(), "📝 새 할 일이 배정됐어요", List.of(), List.of(), message.footer()),
+                tasks, metadata, permalink);
+    }
+
+    static boolean validPermalink(String value) {
+        return value != null && value.length() <= 2048
+                && value.matches("https://[A-Za-z0-9.-]+\\.slack\\.com/archives/[A-Z0-9]+/p[0-9]+(?:\\?[A-Za-z0-9_=&.%-]+)?");
+    }
+
+    private Rendered render(NotificationMessage message, List<Task> tasks, Map<Long, MeetingTaskResponse> metadata, String permalink) {
         List<Task> ordered = message.digestDate() == null ? tasks : tasks.stream().sorted(Comparator
                 .comparing((Task task) -> task.getAssignee() == null ? null : task.getAssignee().getId(), Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(Task::getDueDate, Comparator.nullsLast(Comparator.naturalOrder())).thenComparing(Task::getId)).toList();
@@ -27,6 +42,10 @@ public class SlackBotRenderer {
         heading.add(bounded(escape(message.title())));
         message.summaryLines().forEach(summary -> heading.add(bounded(escape(summary))));
         String footer = bounded(escape(message.footer()));
+        if (validPermalink(permalink)) {
+            String link = "\n<" + permalink + "|원래 채널 메시지>";
+            footer = bounded(footer, 3000 - link.length()) + link;
+        }
         List<String> lines = ordered.stream().map(task -> line(message, task, metadata.get(task.getId()))).toList();
         int shown = 0;
         if (fits(heading, lines, "", footer)) shown = lines.size();
@@ -89,9 +108,10 @@ public class SlackBotRenderer {
         return block;
     }
 
-    private String bounded(String text) {
-        if (text.length() <= 3000) return text;
-        return text.substring(0, Character.isHighSurrogate(text.charAt(2999)) ? 2999 : 3000);
+    private String bounded(String text) { return bounded(text, 3000); }
+    private String bounded(String text, int limit) {
+        if (text.length() <= limit) return text;
+        return text.substring(0, Character.isHighSurrogate(text.charAt(limit - 1)) ? limit - 1 : limit);
     }
     static String mention(String id) { return id != null && id.matches("[UW][A-Z0-9]+") ? "<@" + id + ">" : ""; }
     static String escape(String value) {

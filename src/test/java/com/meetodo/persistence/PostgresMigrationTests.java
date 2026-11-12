@@ -3,6 +3,8 @@ package com.meetodo.persistence;
 import com.meetodo.digest.*;
 import com.meetodo.task.*;
 import com.meetodo.notification.Notifier;
+import com.meetodo.slack.SlackMessageReference;
+import com.meetodo.slack.SlackMessageReferenceRepository;
 import java.time.*;
 import java.util.List;
 import java.util.concurrent.*;
@@ -42,6 +44,7 @@ class PostgresMigrationTests {
     @Autowired com.meetodo.member.MemberRepository members;
     @Autowired com.meetodo.meeting.MeetingRepository meetings;
     @Autowired DailyDigestService digests;
+    @Autowired SlackMessageReferenceRepository messageReferences;
     @MockitoBean Notifier notifier;
     @MockitoBean Clock clock;
 
@@ -52,12 +55,13 @@ class PostgresMigrationTests {
         when(clock.instant()).thenReturn(fixed.instant());
     }
 
-    // 검증: 빈 PostgreSQL에 V1/V2를 적용하고 Hibernate가 엔티티 스키마를 검증한다.
+    // 검증: 빈 PostgreSQL에 V1/V2/V3를 적용하고 Hibernate가 엔티티 스키마를 검증한다.
     @Test void appliesInitialMigrationAndValidatesEntities() {
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '1'", String.class)).isEqualTo("1");
         assertThat(jdbc.queryForList("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'", String.class))
                 .contains("members", "meetings", "tasks", "tool_call_logs", "task_mentions", "daily_digests", "slack_message_references");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '2'", String.class)).isEqualTo("2");
+        assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '3'", String.class)).isEqualTo("3");
     }
 
     // 검증: 다시 시작해도 적용된 V1은 재실행하지 않는다.
@@ -199,6 +203,68 @@ class PostgresMigrationTests {
         assertThat(jdbc.queryForObject("SELECT task_ids FROM slack_message_references", String.class)).isEqualTo("[1,2]");
         assertThatThrownBy(() -> jdbc.update("INSERT INTO slack_message_references(channel_id, message_ts, task_ids) VALUES ('C123ABC', '1.000001', '[]')"))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    // 검증: 기존 형식으로 저장한 채널 메시지는 V3 기본값으로 CHANNEL/SENT가 된다.
+    @Test void legacyChannelReferenceDefaultsToSentChannel() {
+        jdbc.update("INSERT INTO slack_message_references(channel_id, message_ts, task_ids) VALUES ('C123ABC', '1.000001', '[]')");
+        assertThat(jdbc.queryForMap("SELECT message_type, delivery_status FROM slack_message_references"))
+                .containsEntry("message_type", "CHANNEL").containsEntry("delivery_status", "SENT");
+    }
+
+    // 검증: DM 대화 열기에 실패해 위치가 없어도 대상 사용자와 실패 코드가 남는다.
+    @Test void failedDirectMessagePersistsWithoutMessageLocation() {
+        meeting(1, "failed-dm");
+        jdbc.update("INSERT INTO slack_message_references(meeting_id, task_ids, message_type, target_slack_user_id, delivery_status, error_code) VALUES (1, '[1,2]', 'DM', 'U123ABC', 'FAILED', 'missing_scope')");
+        assertThat(jdbc.queryForMap("SELECT channel_id, message_ts, target_slack_user_id, delivery_status, error_code FROM slack_message_references"))
+                .containsEntry("channel_id", null).containsEntry("message_ts", null)
+                .containsEntry("target_slack_user_id", "U123ABC").containsEntry("delivery_status", "FAILED")
+                .containsEntry("error_code", "missing_scope");
+    }
+
+    // 검증: 성공 DM의 원본 회의·대상 사용자·작업·링크가 커밋 후에도 보존된다.
+    @Test void sentDirectMessageRoundTripsThroughJpa() {
+        var meeting = meetings.saveAndFlush(com.meetodo.meeting.Meeting.create("새 배정", com.meetodo.meeting.MeetingSource.API_TEXT));
+        messageReferences.saveAndFlush(SlackMessageReference.dm("D123ABC", "1.000001", meeting, "[1,2]", "U123ABC",
+                SlackMessageReference.DeliveryStatus.SENT, null, "https://workspace.slack.com/archives/C123ABC/p1000001"));
+        var reference = messageReferences.findByChannelIdAndMessageTs("D123ABC", "1.000001").orElseThrow();
+        assertThat(reference.getMessageType()).isEqualTo(SlackMessageReference.MessageType.DM);
+        assertThat(reference.getDeliveryStatus()).isEqualTo(SlackMessageReference.DeliveryStatus.SENT);
+        assertThat(reference.getMeetingId()).isEqualTo(meeting.getId());
+        assertThat(reference.getTargetSlackUserId()).isEqualTo("U123ABC");
+        assertThat(reference.getTaskIds()).isEqualTo("[1,2]");
+        assertThat(reference.getPermalink()).isEqualTo("https://workspace.slack.com/archives/C123ABC/p1000001");
+        assertThat(reference.getErrorCode()).isNull();
+    }
+
+    // 검증: 실패 DM 여러 건은 메시지 위치가 null이어도 각각 저장할 수 있다.
+    @Test void multipleFailedDirectMessagesRoundTripThroughJpa() {
+        var meeting = meetings.saveAndFlush(com.meetodo.meeting.Meeting.create("DM 실패", com.meetodo.meeting.MeetingSource.API_TEXT));
+        messageReferences.saveAndFlush(SlackMessageReference.dm(null, null, meeting, "[1]", "U123ABC",
+                SlackMessageReference.DeliveryStatus.FAILED, "missing_scope", null));
+        messageReferences.saveAndFlush(SlackMessageReference.dm(null, null, meeting, "[2]", "U456DEF",
+                SlackMessageReference.DeliveryStatus.FAILED, "cannot_dm_bot", null));
+        assertThat(messageReferences.findAll()).hasSize(2).allSatisfy(reference -> {
+            assertThat(reference.getMessageType()).isEqualTo(SlackMessageReference.MessageType.DM);
+            assertThat(reference.getDeliveryStatus()).isEqualTo(SlackMessageReference.DeliveryStatus.FAILED);
+            assertThat(reference.getMeetingId()).isEqualTo(meeting.getId());
+            assertThat(reference.getChannelId()).isNull();
+            assertThat(reference.getMessageTs()).isNull();
+            assertThat(reference.getErrorCode()).isIn("missing_scope", "cannot_dm_bot");
+        });
+    }
+
+    // 검증: V2 운영 데이터가 있는 상태에서 V3를 적용해도 기존 채널 위치를 보존한다.
+    @Test void upgradingV2PreservesExistingChannelReference() {
+        var v2 = Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas("slack_v2_upgrade").target("2").load();
+        v2.migrate();
+        jdbc.update("INSERT INTO slack_v2_upgrade.slack_message_references(channel_id, message_ts, task_ids) VALUES ('C123ABC', '1.000001', '[1,2]')");
+        Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas("slack_v2_upgrade").load().migrate();
+        assertThat(jdbc.queryForMap("SELECT channel_id, message_ts, task_ids, message_type, delivery_status FROM slack_v2_upgrade.slack_message_references"))
+                .containsEntry("channel_id", "C123ABC").containsEntry("message_ts", "1.000001")
+                .containsEntry("task_ids", "[1,2]").containsEntry("message_type", "CHANNEL").containsEntry("delivery_status", "SENT");
     }
 
     private void meeting(long id, String hash) {

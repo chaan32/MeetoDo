@@ -40,6 +40,7 @@ class SlackAfterCommitPersistenceTests {
     @Autowired TaskService tasks;
     @Autowired TaskRepository taskRepository;
     @Autowired SlackBotService bot;
+    @Autowired com.meetodo.member.MemberRepository members;
     @MockitoBean MethodsClient client;
     @MockitoBean MeetingAgent agent;
 
@@ -59,9 +60,10 @@ class SlackAfterCommitPersistenceTests {
         }
     }
 
-    @AfterEach void clearMessageReferences() { references.deleteAll(); }
+    @AfterEach void clearMessageReferences() { references.deleteAll(); bot.setDmEnabled(false); }
 
     @BeforeEach void prepare() throws Exception {
+        bot.setDmEnabled(false);
         var response = new ChatPostMessageResponse();
         response.setOk(true); response.setChannel("CTEST"); response.setTs("123.456");
         when(client.chatPostMessage(any(ChatPostMessageRequest.class))).thenReturn(response);
@@ -98,6 +100,72 @@ class SlackAfterCommitPersistenceTests {
         verify(client).chatUpdate(request.capture());
         assertThat(request.getValue().getBlocksAsString()).contains("완료 (<@UACTOR>)").doesNotContain("meetodo_complete_task");
         verify(client, never()).chatPostEphemeral(any(com.slack.api.methods.request.chat.ChatPostEphemeralRequest.class));
+    }
+
+    @Test void dmFailureAfterCommitLeavesMeetingAndChannelSent() throws Exception {
+        // 실제 AFTER_COMMIT 경로에서 DM 실패 기록만 남기고 채널 SENT·회의 DONE을 유지한다.
+        bot.setDmEnabled(true);
+        var assignee = members.saveAndFlush(new com.meetodo.member.Member("전", "해찬", "백엔드팀", "UACTOR"));
+        when(agent.process(any(Meeting.class))).thenAnswer(invocation -> {
+            Meeting meeting = invocation.getArgument(0);
+            tasks.createFromTool("DM failed after commit " + meeting.getId(), assignee, null, meeting);
+            return new AgentResult("완료", 1, 1, 0);
+        });
+        var link = new com.slack.api.methods.response.chat.ChatGetPermalinkResponse();
+        link.setOk(true); link.setPermalink("https://meetodo.slack.com/archives/CTEST/p123456");
+        when(client.chatGetPermalink(any(com.slack.api.methods.request.chat.ChatGetPermalinkRequest.class))).thenReturn(link);
+        var failure = new com.slack.api.methods.response.conversations.ConversationsOpenResponse();
+        failure.setError("missing_scope");
+        when(client.conversationsOpen(any(com.slack.api.methods.request.conversations.ConversationsOpenRequest.class))).thenReturn(failure);
+        mvc.perform(post("/api/meetings").contentType("application/json")
+                .content("{\"rawText\":\"DM failure independent commit test\"}"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.status").value("DONE"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.notificationStatus").value("SENT"));
+        assertThat(references.findAll()).filteredOn(ref -> ref.getMessageType() == SlackMessageReference.MessageType.DM)
+                .singleElement().satisfies(ref -> {
+                    assertThat(ref.getDeliveryStatus()).isEqualTo(SlackMessageReference.DeliveryStatus.FAILED);
+                    assertThat(ref.getErrorCode()).isEqualTo("missing_scope");
+                    assertThat(ref.getTargetSlackUserId()).isEqualTo("UACTOR");
+                });
+    }
+
+    @Test void persistedDmClickUpdatesBothCommittedLocations() throws Exception {
+        // 별도 커밋된 DM 좌표로 클릭해 DB 완료와 채널·DM 갱신을 함께 검증한다.
+        bot.setDmEnabled(true);
+        var assignee = members.saveAndFlush(new com.meetodo.member.Member("김", "테스터", "개발팀", "UDMTEST"));
+        when(agent.process(any(Meeting.class))).thenAnswer(invocation -> {
+            Meeting meeting = invocation.getArgument(0);
+            tasks.createFromTool("DM success after commit " + meeting.getId(), assignee, null, meeting);
+            return new AgentResult("완료", 1, 1, 0);
+        });
+        var link = new com.slack.api.methods.response.chat.ChatGetPermalinkResponse();
+        link.setOk(true); link.setPermalink("https://meetodo.slack.com/archives/CTEST/p123456");
+        when(client.chatGetPermalink(any(com.slack.api.methods.request.chat.ChatGetPermalinkRequest.class))).thenReturn(link);
+        var conversation = new com.slack.api.model.Conversation(); conversation.setId("DDMTEST");
+        var opened = new com.slack.api.methods.response.conversations.ConversationsOpenResponse();
+        opened.setOk(true); opened.setChannel(conversation);
+        when(client.conversationsOpen(any(com.slack.api.methods.request.conversations.ConversationsOpenRequest.class))).thenReturn(opened);
+        when(client.chatPostMessage(any(ChatPostMessageRequest.class))).thenAnswer(invocation -> {
+            ChatPostMessageRequest request = invocation.getArgument(0);
+            var response = new ChatPostMessageResponse(); response.setOk(true); response.setChannel(request.getChannel());
+            response.setTs(request.getChannel().equals("CTEST") ? "123.456" : "234.567"); return response;
+        });
+        var updated = new com.slack.api.methods.response.chat.ChatUpdateResponse(); updated.setOk(true);
+        when(client.chatUpdate(any(com.slack.api.methods.request.chat.ChatUpdateRequest.class))).thenReturn(updated);
+        mvc.perform(post("/api/meetings").contentType("application/json")
+                .content("{\"rawText\":\"DM success independent commit test\"}")).andExpect(status().isOk());
+        var dm = references.findByChannelIdAndMessageTs("DDMTEST", "234.567").orElseThrow();
+        assertThat(dm.getMessageType()).isEqualTo(SlackMessageReference.MessageType.DM);
+        Long taskId = new ObjectMapper().readTree(dm.getTaskIds()).get(0).asLong();
+        bot.complete("DDMTEST", "234.567", "UDMTEST", taskId.toString());
+        assertThat(taskRepository.findById(taskId).orElseThrow().getStatus()).isEqualTo(TaskStatus.DONE);
+        var updates = org.mockito.ArgumentCaptor.forClass(com.slack.api.methods.request.chat.ChatUpdateRequest.class);
+        org.mockito.Mockito.verify(client, org.mockito.Mockito.times(2)).chatUpdate(updates.capture());
+        assertThat(updates.getAllValues()).extracting(com.slack.api.methods.request.chat.ChatUpdateRequest::getChannel)
+                .containsExactlyInAnyOrder("CTEST", "DDMTEST");
+        assertThat(updates.getAllValues()).allSatisfy(request ->
+                assertThat(request.getBlocksAsString()).contains("완료 (<@UDMTEST>)").doesNotContain("meetodo_complete_task"));
     }
 
 }

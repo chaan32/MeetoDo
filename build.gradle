@@ -50,6 +50,7 @@ tasks.named('test') {
     useJUnitPlatform()
     // Local credentials must not enable real webhook transports in profile-matrix tests.
     environment 'MEETODO_SLACK_BOT_ENABLED', 'false'
+    environment 'MEETODO_SLACK_DM_ENABLED', 'false'
     environment 'SLACK_APP_TOKEN', ''
     environment 'SLACK_BOT_TOKEN', ''
     environment 'MEETODO_DIGEST_ENABLED', 'false'

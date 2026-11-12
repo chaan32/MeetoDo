@@ -515,3 +515,40 @@ Task와 Meeting의 새 필드 및 메시지 채널·ts·Task ID 목록에 Flyway
 남은 범위: /meetodo 모달·처리 중 게시·모달 중복/실패/초대 안내는 단계2로 남겼다. DB 완료와 Slack 갱신은 원자적이지 않아 메시지 갱신만 실패할 수 있으며 DB 상태는 보존한다. 여러 메시지의 같은 Task를 전부 자동 동기화하지 않고 클릭한 원본만 갱신한다. 기존 DONE 메타데이터 백필·정확히 한 번 전달·Outbox는 구현하지 않았다. 개발 ID가 없는 새 DB는 가짜 ID이며, 이미 저장한 실제 개발 ID는 ENV 생략 시 지우지 않는다.
 
 공식 근거: [Socket Mode](https://docs.slack.dev/tools/java-slack-sdk/guides/socket-mode/), [Interactive Components/3초 ACK](https://docs.slack.dev/tools/java-slack-sdk/guides/interactive-components/), [chat.update](https://docs.slack.dev/reference/methods/chat.update/), [메시지 멘션](https://docs.slack.dev/messaging/formatting-message-text/), [버튼 필드](https://docs.slack.dev/reference/block-kit/block-elements/button-element/). 실제 SDK1.54.0 소스의 SocketModeApp supplier/startAsync, SocketModeRequestParser, App.blockAction, ChatPostMessage/Update/Ephemeral Request와 MethodsClient API를 확인했다. SDK 기본 adapter의 ACK 시점을 확인해 custom supplier의 단일 listener가 ACK를 먼저 보내도록 구현했다.
+
+## 2026-11-12 — Slack 봇 단계1 사용자 실제 확인·권한 복구
+- 증상: 사용자 실제 확인에서 최초 봇 알림이 notificationErrorCode=INTERNAL_ERROR로만 남아 원인을 알 수 없었다. 캡처로 봇 토큰이 노출된 별도 보안 사건도 있었다.
+- 가설: Slack API가 반환한 구체적인 오류 코드가 공통 오류로 바뀌어 진단 정보를 잃었다.
+- 확인: 사용자가 Slack API를 직접 호출해 missing_scope(chat:write)를 확인했다. 권한 추가·재설치 후 토큰을 auth.revoke로 폐기하고 재발급했으며, 이후 not_in_channel은 봇 재초대로 해결했다고 보고했다. 폐기 토큰·캡처·인증 응답 원문은 보관하지 않는다.
+- 원인: 코드 확인상 SlackBotService가 API error를 고정 전송 실패 코드로 바꾸고 NotificationStateService도 그 코드를 INTERNAL_ERROR로 바꿨다. 실제 권한 부족은 사용자 직접 API 확인 사실이며 모델 내부 판단 등의 추정은 없다.
+- 해결 → 결과: 사용자 실제 Slack 확인에서 해찬 완료→완료자 표시·버튼 제거, 민수 가짜 ID 클릭→본인에게만 담당자 전용 안내·원문 유지, 미정 완료→누구나 가능·완료자 표시를 확인했다. 오류 코드 보존 수정의 자동 검증 결과는 아래 단계1.5 완료 기록에 별도로 적는다.
+
+## 2026-11-12 — Slack 오류 코드 소실 재현
+- 증상: mock Slack의 missing_scope 응답을 보존하는 수정 전 테스트가 실패했다.
+- 가설: Slack SDK 결과의 error 필드를 전송 계층에서 버리고 상태 저장 계층에서도 범용 코드로 변환한다.
+- 확인: slackReturnedMissingScopeIsPreserved 1개 실패(고정 SLACK_BOT_POST_FAILED 반환), SlackErrorCodeTests 4개 중2개 실패(INTERNAL_ERROR 변환)를 실제 실행으로 확인했다.
+- 원인: 공급자 예외 원문을 숨기는 처리와 비밀값 없는 오류 코드 보존을 구분하지 않았다.
+- 해결 → 결과: 알려진 Slack 오류 식별자만 허용 목록으로 보존하고 임의 문자열·토큰·URL은 INTERNAL_ERROR로 정제한다. 예외 cause·공급자 응답 본문은 로그/응답에 넣지 않는다. 최종 자동 검증 결과는 단계1.5 완료 기록에 남긴다.
+
+## 2026-11-12 — Slack 담당자 DM 단계1.5 설계
+
+채널 전송 성공·메시지 위치 저장 후에 CREATED이고 실제 Slack ID가 있는 담당자만 사람별 한 통으로 묶어 DM을 보낸다. EXISTING·미정·U-DEV-·다이제스트는 새 배정 DM 대상이 아니다. MEETODO_SLACK_DM_ENABLED 기본값은 false다. 원래 채널 링크를 chat.getPermalink로 얻고 conversations.open→chat.postMessage를 사용한다.
+
+별도 테이블을 또 만들기보다 기존 slack_message_references를 V3로 확장한다. CHANNEL/DM 유형, 대상 사용자, SENT/FAILED, 오류 코드·링크를 보존한다. 대화를 열기도 전에 실패할 수 있어 channel/ts를 nullable로 바꾼다. 기존 행은 CHANNEL/SENT 기본값으로 유지한다. V1/V2를 수정하거나 사용자 데이터를 지우지 않는다. 기존 채널 전송 실패는 Meeting의 알림 상태가 기록하며 DM 실패는 별도 참조 행에만 기록한다.
+
+완료 권한과 DB 상태 전이는 기존 TaskService를 재사용한다. 저장된 Task ID 목록으로 관련 SENT 메시지를 찾고 각 메시지의 업무 집합을 DB 현재 상태로 다시 렌더링한다. 한 메시지 갱신 실패가 나머지 갱신·DB 완료를 막지 않는다. DM 전송/갱신 실패는 재시도하지 않고 안전한 코드만 남긴다. 채널 전송 상태 SENT는 DM 성공까지 뜻하지 않는다.
+
+알려진 한계: 외부 전송과 위치 저장·완료 후 메시지 갱신은 원자적이지 않다. 프로세스 종료나 DB 오류로 실제 전달 뒤 위치 저장이 실패할 수 있으며 자동 복구/정확히 한 번 전달/Outbox는 구현하지 않았다. 관련 메시지는 현재 전체 SENT 참조를 읽고 DB-owned Task ID를 비교한다. 데이터가 커지면 Task-메시지 연결 테이블과 인덱스 조회로 바꾼다. 같은 Task를 동시에 완료하는 요청의 메시지 수정 순서까지 직렬화하지 않으므로 일시적으로 오래된 표시가 남을 수 있다. 위 단계1 기록의 '클릭한 원본만 갱신' 범위는 이번 단계에서 관련 채널·DM 갱신으로 확장됐다.
+
+공식 근거: [conversations.open](https://docs.slack.dev/reference/methods/conversations.open/)의 1:1 DM·im:write, [chat.postMessage](https://docs.slack.dev/reference/methods/chat.postMessage/)의 chat:write, [chat.getPermalink](https://docs.slack.dev/reference/methods/chat.getPermalink/)의 추가 scope 없음, [App Home Messages Tab](https://docs.slack.dev/surfaces/app-home/)을 확인했다. 이번 단계는 DM 텍스트 수신이 아니라 버튼 처리이므로 im:history/message.im 구독은 추가하지 않는다. /meetodo 입력은 사용자 단계1.5 확인 후 별도로 진행한다.
+
+## 2026-11-12 — 기존 H2 메시지 스키마 업그레이드 보완
+- 증상: 실제 사용자 DB가 아닌 메모리 H2에 기존 V2 메시지 행을 만든 검증에서, Hibernate update가 NOT NULL 컬럼을 추가하다 재현 테스트2개가 실패했다.
+- 가설: 새 엔티티 생성자의 CHANNEL/SENT 초기값은 이미 저장된 행의 DB 기본값이 아니며, update만으로 nullable 제약 변경까지 보장할 수 없다.
+- 확인: LocalSlackMessageUpgradeTests의 기존 행 기본값/실패 DM 저장 두 테스트가 SchemaManagementException·JdbcSQLIntegrityConstraintViolationException으로 수정 전 실패했다. 사용자 data/는 읽거나 수정하지 않았다.
+- 원인: PostgreSQL V3와 신규 H2 create-drop 검증만으로 기존 H2 update 경로까지 검증됐다고 간주할 수 없었다. 기존 행이 있는 새 NOT NULL 컬럼 추가에는 명시적 기본값이 필요하다.
+- 해결 → 결과: local 전용 시작 SQL을 Hibernate update 전에 실행해 기존 행을 CHANNEL/SENT로 보존하고 channel/ts NOT NULL을 완화한다. 새 DB에서는 테이블 부재를 건너뛰며 재실행해도 기존 메시지를 보존한다. 자동 검증 결과는 아래 최종 기록에 남긴다. 데이터 삭제·개발 데이터 초기화는 수행하지 않는다.
+
+단계1.5 최종 검증: `./gradlew test bootJar --no-daemon` **BUILD SUCCESSFUL, 394개 / 실패0 / 오류0 / 건너뜀0**. MethodsClient와 LLM은 mock이며 실제 Slack/OpenAI는 호출하지 않았다. PostgreSQL Testcontainers22개(V3 검증·V2→V3 기존 행 보존 포함), 기존 H2 업그레이드/새 DB/재실행4개, DM14개·렌더러9개·서비스12개를 포함한다. 실제 JPA AFTER_COMMIT 경로에서 DM 실패가 채널SENT·회의DONE에 영향을 주지 않음과, 별도 커밋된 DM 클릭→DB DONE→채널+DM 갱신을 확인했다.
+
+추가 검토에서 공식 Slack 오류 `team_access_not_granted`·`service_unavailable`·`messages_tab_disabled` 누락도 테스트3개 RED로 확인해 공식 메서드의 오류 허용 목록을 보강했다. 임의 공급자 문자열·토큰·URL은 저장하지 않는다. 로그 보안·잘림·기존 웹훅/Discord·Task API·프로필 회귀가 최종 전체 실행에 포함됐다. 실제 DM 전달·채널 링크·DM 버튼 확인은 사용자 다음 단계이며 /meetodo 입력은 아직 진행하지 않는다.
