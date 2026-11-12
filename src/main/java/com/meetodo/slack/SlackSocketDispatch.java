@@ -22,10 +22,13 @@ final class SlackSocketDispatch {
             if (request == null) return;
             // Bolt's default adapter sends the ACK only after app.run returns; send it before queued DB/HTTP work.
             client.sendSocketModeResponse(new AckResponse(request.getEnvelope().getEnvelopeId()));
-            executor.execute(() -> {
+            Runnable work = () -> {
                 try { app.run(request.getBoltRequest()); }
                 catch (Exception exception) { log.warn("Slack action processing failed"); }
-            });
+            };
+            // Slash trigger IDs expire in three seconds; never wait behind completion HTTP calls.
+            if ("slash_commands".equals(request.getEnvelope().getType())) work.run();
+            else executor.execute(work);
         } catch (Exception exception) { log.warn("Slack socket event could not be handled"); }
     }
 }

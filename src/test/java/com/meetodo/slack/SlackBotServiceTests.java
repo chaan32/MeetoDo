@@ -147,4 +147,43 @@ class SlackBotServiceTests {
         assertThat(task.getCompletedBySlackUserId()).isEqualTo("UFIRST");
     }
 
+    @Test void inputProgressPostsBeforeMeetingPersistence() throws Exception {
+        // Meeting 저장 전 게시만 수행하고 반환 좌표를 미저장 객체에 붙인다.
+        var meeting = com.meetodo.meeting.Meeting.create("입력",com.meetodo.meeting.MeetingSource.SLACK_TEXT);
+        var repository = mock(MeetingRepository.class);
+        var inputBot = new SlackBotService(client,"C1",refs,tasks,service,mock(MeetingResults.class),repository,new ObjectMapper(),transactions);
+        var response=new ChatPostMessageResponse(); response.setOk(true); response.setChannel("C2"); response.setTs("2.3");
+        when(client.chatPostMessage(any(ChatPostMessageRequest.class))).thenReturn(response);
+        inputBot.startInput(meeting,"C2");
+        var request=ArgumentCaptor.forClass(ChatPostMessageRequest.class); verify(client).chatPostMessage(request.capture());
+        assertThat(request.getValue().getChannel()).isEqualTo("C2");
+        assertThat(request.getValue().getText()).isEqualTo("⏳ 회의록 정리 중...");
+        assertThat(meeting.getSlackChannelId()).isEqualTo("C2"); assertThat(meeting.getSlackMessageTs()).isEqualTo("2.3");
+        assertThat(meeting.getId()).isNull();
+        verifyNoInteractions(repository, refs, transactions);
+    }
+
+    @Test void discardedInputDeletesItsOwnTemporaryMessageWithoutDatabaseWrites() throws Exception {
+        // DB 해시 경쟁에서 진 요청은 자기 후보 객체의 임시 메시지만 정리한다.
+        var candidate=com.meetodo.meeting.Meeting.create("동시 입력",com.meetodo.meeting.MeetingSource.SLACK_TEXT);
+        candidate.recordSlackMessage("C2","2.3");
+        var response=new ChatDeleteResponse(); response.setOk(true);
+        when(client.chatDelete(any(ChatDeleteRequest.class))).thenReturn(response);
+        bot.discardInputProgress(candidate);
+        var request=ArgumentCaptor.forClass(ChatDeleteRequest.class); verify(client).chatDelete(request.capture());
+        assertThat(request.getValue().getChannel()).isEqualTo("C2"); assertThat(request.getValue().getTs()).isEqualTo("2.3");
+        verifyNoInteractions(refs,transactions);
+    }
+
+    @Test void temporaryMessageDeleteFailureIsSafeAndDoesNotEscape(org.springframework.boot.test.system.CapturedOutput output) throws Exception {
+        // 임시 메시지 정리 실패는 재처리를 유발하지 않으며 공급자 예외·토큰을 남기지 않는다.
+        var candidate=com.meetodo.meeting.Meeting.create("원문전체삭제실패",com.meetodo.meeting.MeetingSource.SLACK_TEXT);
+        candidate.recordSlackMessage("C2","2.3");
+        when(client.chatDelete(any(ChatDeleteRequest.class))).thenThrow(new java.io.IOException("xoxb-secret https://hooks.slack.com/secret 원문전체삭제실패"));
+        assertThatCode(() -> bot.discardInputProgress(candidate)).doesNotThrowAnyException();
+        assertThat(output).contains("Slack temporary message cleanup failed: INTERNAL_ERROR")
+                .doesNotContain("xoxb-secret","hooks.slack.com","원문전체삭제실패");
+        verify(client).chatDelete(any(ChatDeleteRequest.class)); verifyNoInteractions(refs,transactions);
+    }
+
 }

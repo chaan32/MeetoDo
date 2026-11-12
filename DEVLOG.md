@@ -552,3 +552,50 @@ Task와 Meeting의 새 필드 및 메시지 채널·ts·Task ID 목록에 Flyway
 단계1.5 최종 검증: `./gradlew test bootJar --no-daemon` **BUILD SUCCESSFUL, 394개 / 실패0 / 오류0 / 건너뜀0**. MethodsClient와 LLM은 mock이며 실제 Slack/OpenAI는 호출하지 않았다. PostgreSQL Testcontainers22개(V3 검증·V2→V3 기존 행 보존 포함), 기존 H2 업그레이드/새 DB/재실행4개, DM14개·렌더러9개·서비스12개를 포함한다. 실제 JPA AFTER_COMMIT 경로에서 DM 실패가 채널SENT·회의DONE에 영향을 주지 않음과, 별도 커밋된 DM 클릭→DB DONE→채널+DM 갱신을 확인했다.
 
 추가 검토에서 공식 Slack 오류 `team_access_not_granted`·`service_unavailable`·`messages_tab_disabled` 누락도 테스트3개 RED로 확인해 공식 메서드의 오류 허용 목록을 보강했다. 임의 공급자 문자열·토큰·URL은 저장하지 않는다. 로그 보안·잘림·기존 웹훅/Discord·Task API·프로필 회귀가 최종 전체 실행에 포함됐다. 실제 DM 전달·채널 링크·DM 버튼 확인은 사용자 다음 단계이며 /meetodo 입력은 아직 진행하지 않는다.
+
+## 2026-11-12 — 단계1.5 실제 Slack DM 확인과 실행 설정 분리
+- 증상: 사용자 첫 실제 확인에서 담당자 DM이 도착하지 않았다.
+- 가설: Slack 권한·App Home 설정 문제와 서버의 DM 활성화 설정 문제를 나눠 확인해야 했다.
+- 확인: 사용자가 Slack API를 직접 호출해 conversations.open의 ok와 chat.postMessage 성공을 확인하고 권한·App Home 경로가 정상임을 확인했다고 보고했다. 코드상 DM은 MEETODO_SLACK_DM_ENABLED=true일 때만 실행된다.
+- 원인: 사용자는 DM 설정을 켜 서버를 다시 실행한 뒤 정상 동작을 확인했다. Slack 전송 로직 버그로 단정하지 않고 서버 실행 설정 문제로 분리했다. API 직접 호출의 인증값·응답 원문은 기록하지 않는다.
+- 해결 → 결과: 사용자 실제 Slack에서 전해찬 새 업무2개가 제목·완료 버튼·원래 채널 링크를 가진 DM1통으로 묶여 도착했다. 김민수 가짜ID에는 DM이 없었다. DM 완료→채널 완료자 표시·버튼 제거, 채널 완료→DM 반영까지 확인했다. 이 실제 확인을 위한 코드 수정은 없었다.
+
+## 2026-11-12 — Slack 입력 단계2 설계·재현
+
+/meetodo는 원래 채널을 private_metadata에 담은 여러 줄 모달을 연다. 공식 plain_text_input 상한에 맞춰 모달3000자, Swagger20000자는 그대로 둔다. 서버가 빈 문자열·공백·상한·사용자·채널을 검증한다. ACK를 실제 Socket에 먼저 보내고 제출 작업은 별도1worker/대기10개 큐로 넘긴다. Slash trigger3초 제한 때문에 모달 열기는 기존 버튼 HTTP 대기열 뒤에 넣지 않는다.
+
+새 해시를 DB에서 선점한 요청에만 진행 게시 콜백을 실행한다. 동일 본문은 콜백 없이 기존 회의 결과와 요청자 비공개 안내를 반환한다. source=SLACK_TEXT로 저장하고, 기존 회의 처리 서비스·AFTER_COMMIT 알림·CREATED 담당자 DM을 공유한다. 진행 메시지 좌표와 업무 집합은 기존 참조 테이블을 사용하므로 스키마 마이그레이션 추가는 없다.
+
+재현 증거: 모달 viewsOpen 미호출1건, 진행 게시 미호출1건, Slack source/준비 콜백 순서 및 게시 실패 보존3건 중2건, 진행 메시지 수정·DM JPA 통합1건, Slash 명령의 대기열 분리1건에서 수정 전 실패를 확인했다. 신규 기능의 mock/메모리DB 재현이며 실제 Slack 장애로 기록하지 않는다.
+
+봇 미초대일 때 chat.postEphemeral도 채널 권한 때문에 실패할 수 있어 기존 slash response_url 기반 응답 콜백을 이용한다. 공식 문서상 이 응답은 채널 게시 권한을 우회하며 기본 ephemeral·30분5회다. URL 자체는 DB·로그에 저장하지 않는다. viewID별 사용자·채널·응답 콜백은 메모리에 최대1000개/30분만 보관하고 제출·취소 시 제거한다. 재시작·만료 시 모달을 다시 열어야 하는 한계가 있다.
+
+공식 근거: [Slash Commands](https://docs.slack.dev/tools/java-slack-sdk/guides/slash-commands/), [Java Modals](https://docs.slack.dev/tools/java-slack-sdk/guides/modals/), [plain_text_input 3000자](https://docs.slack.dev/reference/block-kit/block-elements/plain-text-input-element/), [ACK·trigger·response_url](https://docs.slack.dev/interactivity/handling-user-interaction/). 실제 SDK1.54.0의 App.command/viewSubmission/viewClosed, ViewsOpenRequest.viewAsString, ViewSubmissionPayload/ViewState, SlashCommandContext.respond를 확인했다. Socket Mode에서는 새 공개 Request URL이 필요 없다.
+
+## 2026-11-12 — Slack 진행 게시 실패 코드 보존
+- 증상: 진행 게시 실패를 FAILED/SKIPPED로만 남기는 초안에서는 not_in_channel 진단 코드가 사라졌다.
+- 가설: 일반 전송 리스너를 거치지 않는 준비 콜백 실패 경계에도 별도 안전한 오류 코드 저장이 필요하다.
+- 확인: progressPostFailureDoesNotCallAgentAndPersistsSafeSlackError가 수정 전 실패했다. 실제 사용자 Slack 장애가 아니라 이번 구현의 자동 재현 결과다.
+- 원인: 진행 게시 실패를 단순 알림 생략으로 분류해 기존 채널 전송 오류 보존 규칙과 달라졌다.
+- 해결 → 결과: LLM은 호출하지 않고 Meeting FAILED·알림FAILED·정제된 Slack 코드로 저장한다. 추가 알림 이벤트는 발행하지 않는다. 해당 테스트와 최종 전체425개 테스트가 통과했다.
+
+단계2 현재 검증 결과: `./gradlew test bootJar --no-daemon` **BUILD SUCCESSFUL, 425개 / 실패0 / 오류0 / 건너뜀0**. PostgreSQL22개·H2 업그레이드4개·기존 API/프로필/웹훅/Discord/DM 회귀 포함. 새 모달24개, Slack 회의 준비/중복/실패3개, 실제 JPA 원래 채널 진행 메시지 수정+CREATED DM·LLM실패 원본 수정2개, 진행 게시·ACK/trigger 분리 테스트를 포함한다. 실제 Slack/OpenAI 호출·사용자 DB 변경·커밋은 하지 않았다.
+
+확인 대기 정책: 진행 게시가 봇 미초대로 실패해 LLM0회여도 기존 해시는 FAILED Meeting에 남는다. 현재는 본문 그대로 재제출하면 기존 실패 결과를 중복으로 반환한다. 봇 초대 후 같은 본문 재시도를 이 경우에만 허용할지 사용자에게 확인을 요청했으며, 일반 완료/처리실패 중복 정책을 임의로 바꾸지 않았다. 진행 게시 성공 후 DB 저장 실패 시 외부 진행 메시지만 남을 가능성도 있으며 자동 복구/Outbox는 이번 범위가 아니다.
+
+## 2026-11-12 — Slack 진행 게시를 Meeting 저장보다 먼저 실행
+- 증상: 진행 게시가 not_in_channel로 실패했는데도 Meeting 해시가 저장돼 초대한 뒤 같은 본문을 재시도하면 기존 FAILED 결과로 막혔다.
+- 가설: 실패 회의의 재시도 예외보다, 실제 처리를 시작할 수 있는지 확인한 뒤 Meeting을 저장하면 원인을 제거할 수 있다.
+- 확인: 게시 실패 후 Meeting 없음·초대 후 같은 본문 DONE·게시 콜백 시 미저장 상태를 요구한4개 테스트 중3개가 수정 전 실패했다. startInput의 저장 전 게시 테스트도 기존 DB 참조 때문에 실패했고, 임시 메시지 정리 테스트는 chatDelete 미호출로 실패했다. 모두 mock Slack/메모리 JPA 재현이며 실제 Slack 장애를 새로 측정한 것은 아니다.
+- 원인: 해시 선점을 먼저 저장하고 진행 게시를 수행해, LLM이 실행되지 않은 게시 실패도 영구적인 중복 대상이 됐다.
+- 해결 → 결과: 사용자 선호1안(기존 해시 확인→진행 게시→성공 후 Meeting/해시 저장→LLM)을 선택했다. 게시 실패 시 Meeting·해시·ToolCallLog 없이 요청자에게만 초대 안내를 보낸다. 별도 재시도 상태/FAILED→PROCESSING 예외는 도입하지 않았다. 실제 JPA+mock 입력의 미초대→같은 본문 재시도→완료 재전송과 barrier 동시 요청 검증이 통과했고 최종 전체 결과는 아래 기록한다.
+
+동시 제출 기준: 서로 다른 요청이 사전 조회를 동시에 통과하면 진행 메시지2개가 잠깐 생길 수 있다. DB SHA-256 유니크 제약의 승자만 Meeting을 저장하고 LLM을 실행한다. 패자는 자기 후보 객체의 채널/ts로 임시 메시지만 chat.delete하고 기존 회의 안내를 보낸다. Slack 제출 메서드의 정리 콜백은 필수다. Meeting·ToolCallLog를 삭제하는 방식이 아니다. barrier 테스트에서 동일 본문2요청이 모두 게시 단계를 지난 뒤 경쟁해 같은 meetingId를 반환하고, Meeting1건·에이전트 실행1번·완료 알림1번·정리 콜백1번을 확인했다. 실제 다중 서버 Slack 실행을 측정했다는 뜻은 아니다.
+
+트레이드오프: 2안은 선점이 빨라 중복 진행 게시를 줄일 수 있지만 게시 실패 상태·재시도 자격·동시 재시도 선점 규칙을 추가해야 한다. 1안은 실패한 게시가 해시를 잠그지 않아 자연스러운 재시도를 얻는 대신, 중복 임시 게시와 정리를 허용한다. DB 실패 시에도 임시 메시지를 정리하며 정리 실패는 안전한 로그만 남긴다. 외부 게시와 DB 저장은 원자적이지 않으므로 게시 성공 후 프로세스 종료·삭제 실패·전송 타임아웃 때 임시 메시지가 남을 수 있다. 자동 재전송/정확히 한 번 UI 전달/Outbox는 보장하지 않는다.
+
+기존 FAILED 행·ToolCallLog는 삭제/백필하지 않는다. 이번 정책은 앞으로의 게시 실패가 Meeting으로 저장되지 않게 하는 변경이다. 이미 이전 버전에서 저장된 FAILED 본문은 기존 중복 정책을 유지한다. 새 실제 검증에는 기존 DB에 없는 본문을 사용한다. 처리 시작 시각은 진행 게시 성공 뒤/DB 저장 전이며 모달·대기·진행 게시 지연을 처리 시간에 섞지 않는다. 새 처리 시간 수치는 아직 측정하지 않았다.
+
+공식 근거: [chat.delete](https://docs.slack.dev/reference/methods/chat.delete/)는 기존 chat:write 권한으로 봇 자신이 게시한 메시지만 삭제한다. 실제 SDK1.54.0의 ChatDeleteRequest.channel/ts와 MethodsClient.chatDelete를 사용하고 테스트에서는 SDK를 mock으로 대체했다.
+
+게시 순서 수정 최종 검증: `./gradlew test bootJar --no-daemon` **BUILD SUCCESSFUL, 431개 / 실패0 / 오류0 / 건너뜀0**. 미초대 게시 실패→Meeting·ToolCallLog·참조 없음, 초대 후 같은 본문 정상 처리, 완료 본문 중복 안내, 두 요청 barrier 경쟁→Meeting1건/에이전트1번/완료 알림1번/패자 정리1번을 검증했다. 기존 Task/프로필/웹훅/Discord/DM·PostgreSQL/H2 전체 회귀 포함. SDK chat.delete 실패 로그의 비밀값 비노출도 확인했다. 실제 Slack·OpenAI 호출, 사용자 DB 초기화, git 커밋은 하지 않았다. 앞선 '게시 실패 재시도 정책 확인 대기'는 사용자 승인1안 적용으로 종료했다.

@@ -30,26 +30,43 @@ public class MeetingApplicationService {
         this.clock = clock; this.results = results; this.completion = completion;
     }
 
+    public MeetingResponse submitFromSlack(MeetingRequest request, java.util.function.Consumer<Meeting> beforeSave,
+                                          java.util.function.Consumer<Meeting> discardProgress) {
+        return submit(request, MeetingSource.SLACK_TEXT, java.util.Objects.requireNonNull(beforeSave),
+                java.util.Objects.requireNonNull(discardProgress));
+    }
+
     public MeetingResponse submit(MeetingRequest request) {
+        return submit(request, MeetingSource.API_TEXT, meeting -> { }, meeting -> { });
+    }
+
+    private MeetingResponse submit(MeetingRequest request, MeetingSource source,
+                                   java.util.function.Consumer<Meeting> beforeSave,
+                                   java.util.function.Consumer<Meeting> discardProgress) {
         MeetingAgent agent = agents.getIfAvailable();
         if (agent == null) throw new MeetingAgentDisabledException();
 
-        Meeting candidate = Meeting.create(request.rawText(), MeetingSource.API_TEXT);
+        Meeting candidate = Meeting.create(request.rawText(), source);
         Optional<Meeting> previous = meetings.findByContentHash(candidate.getContentHash());
         if (previous.isPresent()) return results.get(previous.get().getId());
 
+        // No Meeting/hash is persisted until Slack successfully posts the progress message.
+        beforeSave.accept(candidate);
         Meeting meeting;
         try {
+            candidate.startProcessing(Instant.now(clock));
             meeting = meetings.saveAndFlush(candidate);
         } catch (DataIntegrityViolationException duplicateSubmission) {
-            // A concurrent request may win the unique content-hash insert after our initial lookup.
+            discardProgress(candidate, discardProgress);
+            // The unique hash still selects one processor across application instances.
             return meetings.findByContentHash(candidate.getContentHash())
                     .map(existing -> results.get(existing.getId()))
                     .orElseThrow(() -> duplicateSubmission);
+        } catch (RuntimeException persistenceFailure) {
+            discardProgress(candidate, discardProgress);
+            throw persistenceFailure;
         }
 
-        meeting.startProcessing(Instant.now(clock));
-        meeting = meetings.save(meeting);
         AgentResult result;
         try {
             result = agent.process(meeting);
@@ -78,6 +95,12 @@ public class MeetingApplicationService {
     public MeetingResponse get(Long id) { return results.get(id); }
     public List<MeetingHistoryResponse> recent() { return results.recent(); }
     public List<ToolCallLogResponse> logs(Long id) { return results.logs(id); }
+
+    private void discardProgress(Meeting candidate, java.util.function.Consumer<Meeting> discard) {
+        // Best-effort remote cleanup must not hide the database result or trigger another LLM run.
+        try { discard.accept(candidate); }
+        catch (RuntimeException ignored) { }
+    }
 
     private Meeting currentProcessingMeeting(Meeting meeting) {
         Meeting current = meetings.findById(meeting.getId()).orElseThrow(MeetingNotFoundException::new);

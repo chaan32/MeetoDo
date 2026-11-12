@@ -42,6 +42,7 @@ public class SlackMessageReference {
     public Long getMeetingId() { return meeting == null ? null : meeting.getId(); }
     public LocalDate getDigestDate() { return digestDate; }
     public String getTaskIds() { return taskIds; }
+    public void recordTasks(String taskIds) { this.taskIds = taskIds; }
     public MessageType getMessageType() { return messageType; }
     public String getTargetSlackUserId() { return targetSlackUserId; }
     public DeliveryStatus getDeliveryStatus() { return deliveryStatus; }

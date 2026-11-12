@@ -37,6 +37,7 @@ class SlackAfterCommitPersistenceTests {
     @Autowired MockMvc mvc;
     @Autowired SlackMessageReferenceRepository references;
     @Autowired MeetingRepository meetings;
+    @Autowired MeetingApplicationService application;
     @Autowired TaskService tasks;
     @Autowired TaskRepository taskRepository;
     @Autowired SlackBotService bot;
@@ -166,6 +167,93 @@ class SlackAfterCommitPersistenceTests {
                 .containsExactlyInAnyOrder("CTEST", "DDMTEST");
         assertThat(updates.getAllValues()).allSatisfy(request ->
                 assertThat(request.getBlocksAsString()).contains("완료 (<@UDMTEST>)").doesNotContain("meetodo_complete_task"));
+    }
+
+    @Test void slackSubmissionUpdatesProgressInOriginChannelAndSendsNewAssignmentDm() throws Exception {
+        // Slack 입력도 기존 알림·DM 경계를 재사용하고 설정 채널이 아닌 원래 채널의 진행 메시지를 수정한다.
+        bot.setDmEnabled(true);
+        var assignee = members.saveAndFlush(new com.meetodo.member.Member("전", "슬랙입력", "개발팀", "USLACKINPUT"));
+        when(agent.process(any(Meeting.class))).thenAnswer(invocation -> {
+            Meeting meeting=invocation.getArgument(0);
+            tasks.createFromTool("슬랙 신규 업무 " + meeting.getId(),assignee,null,meeting);
+            return new AgentResult("완료",1,1,0);
+        });
+        when(client.chatPostMessage(any(ChatPostMessageRequest.class))).thenAnswer(invocation -> {
+            ChatPostMessageRequest request=invocation.getArgument(0);
+            var response=new ChatPostMessageResponse(); response.setOk(true); response.setChannel(request.getChannel());
+            response.setTs(request.getChannel().equals("CORIGIN") ? "345.678" : "456.789"); return response;
+        });
+        var updated=new com.slack.api.methods.response.chat.ChatUpdateResponse(); updated.setOk(true);
+        when(client.chatUpdate(any(com.slack.api.methods.request.chat.ChatUpdateRequest.class))).thenReturn(updated);
+        var link=new com.slack.api.methods.response.chat.ChatGetPermalinkResponse(); link.setOk(true);
+        link.setPermalink("https://meetodo.slack.com/archives/CORIGIN/p345678");
+        when(client.chatGetPermalink(any(com.slack.api.methods.request.chat.ChatGetPermalinkRequest.class))).thenReturn(link);
+        var conversation=new com.slack.api.model.Conversation(); conversation.setId("DSLACKINPUT");
+        var opened=new com.slack.api.methods.response.conversations.ConversationsOpenResponse(); opened.setOk(true); opened.setChannel(conversation);
+        when(client.conversationsOpen(any(com.slack.api.methods.request.conversations.ConversationsOpenRequest.class))).thenReturn(opened);
+        var response = application.submitFromSlack(new com.meetodo.meeting.dto.MeetingRequest("Slack input integration"),m -> bot.startInput(m,"CORIGIN"),bot::discardInputProgress);
+        assertThat(response.status()).isEqualTo(MeetingStatus.DONE);
+        assertThat(response.notificationStatus()).isEqualTo(NotificationStatus.SENT);
+        var posts=org.mockito.ArgumentCaptor.forClass(ChatPostMessageRequest.class);
+        org.mockito.Mockito.verify(client,org.mockito.Mockito.times(2)).chatPostMessage(posts.capture());
+        assertThat(posts.getAllValues().getFirst().getChannel()).isEqualTo("CORIGIN");
+        assertThat(posts.getAllValues().getFirst().getText()).isEqualTo("⏳ 회의록 정리 중...");
+        assertThat(posts.getAllValues().getLast().getChannel()).isEqualTo("DSLACKINPUT");
+        var update=org.mockito.ArgumentCaptor.forClass(com.slack.api.methods.request.chat.ChatUpdateRequest.class); verify(client).chatUpdate(update.capture());
+        assertThat(update.getValue().getChannel()).isEqualTo("CORIGIN"); assertThat(update.getValue().getTs()).isEqualTo("345.678");
+        assertThat(update.getValue().getBlocksAsString()).contains("회의 정리 완료","meetodo_complete_task");
+        var ref=references.findByChannelIdAndMessageTs("CORIGIN","345.678").orElseThrow();
+        assertThat(new ObjectMapper().readTree(ref.getTaskIds())).hasSize(1);
+        assertThat(references.findByChannelIdAndMessageTs("DSLACKINPUT","456.789")).isPresent();
+    }
+
+    @Test void slackAgentFailureReplacesOriginalProgressWithGenericFailure() throws Exception {
+        // LLM 실패도 새 게시 대신 같은 ts를 수정하고 원문·공급자 오류를 노출하지 않는다.
+        var progress=new ChatPostMessageResponse(); progress.setOk(true); progress.setChannel("CORIGIN"); progress.setTs("567.890");
+        when(client.chatPostMessage(any(ChatPostMessageRequest.class))).thenReturn(progress);
+        var updated=new com.slack.api.methods.response.chat.ChatUpdateResponse(); updated.setOk(true);
+        when(client.chatUpdate(any(com.slack.api.methods.request.chat.ChatUpdateRequest.class))).thenReturn(updated);
+        when(agent.process(any())).thenThrow(new MeetingAgentException("LLM_ERROR",1,0));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> application.submitFromSlack(
+                new com.meetodo.meeting.dto.MeetingRequest("원문전체실패확인"),m -> bot.startInput(m,"CORIGIN"),bot::discardInputProgress))
+                .isInstanceOf(MeetingProcessingException.class);
+        var update=org.mockito.ArgumentCaptor.forClass(com.slack.api.methods.request.chat.ChatUpdateRequest.class); verify(client).chatUpdate(update.capture());
+        assertThat(update.getValue().getChannel()).isEqualTo("CORIGIN"); assertThat(update.getValue().getTs()).isEqualTo("567.890");
+        assertThat(update.getValue().getText()).contains("❌ 회의록 정리에 실패했어요 (회의 ").doesNotContain("원문전체실패확인","LLM_ERROR");
+        verify(client).chatPostMessage(any(ChatPostMessageRequest.class));
+        verify(client,never()).conversationsOpen(any(com.slack.api.methods.request.conversations.ConversationsOpenRequest.class));
+    }
+
+    @Test void missingBotLeavesNoMeetingAndSameBodyWorksAfterInvitation() throws Exception {
+        // 실제 입력 서비스·JPA 경로에서 미초대 안내 뒤 같은 본문을 처리하고 완료 재전송은 중복 안내한다.
+        long before=meetings.count(); var replies=new java.util.ArrayList<String>();
+        var input=new SlackMeetingInputService(client,application,bot,Runnable::run,
+                java.time.Clock.fixed(java.time.Instant.parse("2026-11-12T00:00:00Z"),java.time.ZoneId.of("Asia/Seoul")));
+        var modal=new com.slack.api.methods.response.views.ViewsOpenResponse(); modal.setOk(true);
+        modal.setView(com.slack.api.model.view.View.builder().id("VRETRY1").build());
+        when(client.viewsOpen(any(com.slack.api.methods.request.views.ViewsOpenRequest.class))).thenReturn(modal);
+        var denied=new ChatPostMessageResponse(); denied.setError("not_in_channel");
+        when(client.chatPostMessage(any(ChatPostMessageRequest.class))).thenReturn(denied);
+        String text="새 게시 순서 같은 본문 실제 JPA";
+        input.open("trigger1","CRETRY","UACTOR",replies::add); input.submit("VRETRY1","CRETRY","UACTOR",text);
+        assertThat(meetings.count()).isEqualTo(before); assertThat(references.count()).isZero();
+        assertThat(replies).containsExactly("/invite @MeetoDo 후 다시 시도해 주세요.");
+        verify(agent,never()).process(any());
+        var progress=new ChatPostMessageResponse(); progress.setOk(true); progress.setChannel("CRETRY"); progress.setTs("678.901");
+        when(client.chatPostMessage(any(ChatPostMessageRequest.class))).thenReturn(progress);
+        var updated=new com.slack.api.methods.response.chat.ChatUpdateResponse(); updated.setOk(true);
+        when(client.chatUpdate(any(com.slack.api.methods.request.chat.ChatUpdateRequest.class))).thenReturn(updated);
+        modal.setView(com.slack.api.model.view.View.builder().id("VRETRY2").build());
+        input.open("trigger2","CRETRY","UACTOR",replies::add); input.submit("VRETRY2","CRETRY","UACTOR",text);
+        assertThat(meetings.count()).isEqualTo(before+1);
+        var meeting=meetings.findByContentHash(Meeting.create(text,MeetingSource.SLACK_TEXT).getContentHash()).orElseThrow();
+        assertThat(meeting.getStatus()).isEqualTo(MeetingStatus.DONE);
+        modal.setView(com.slack.api.model.view.View.builder().id("VRETRY3").build());
+        input.open("trigger3","CRETRY","UACTOR",replies::add); input.submit("VRETRY3","CRETRY","UACTOR",text);
+        assertThat(replies.getLast()).isEqualTo("이미 정리된 회의록입니다 (회의 " + meeting.getId() + ")");
+        org.mockito.Mockito.verify(client,org.mockito.Mockito.times(2)).chatPostMessage(any(ChatPostMessageRequest.class));
+        verify(client).chatUpdate(any(com.slack.api.methods.request.chat.ChatUpdateRequest.class));
+        verify(agent).process(any()); assertThat(meetings.count()).isEqualTo(before+1);
     }
 
 }
