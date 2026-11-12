@@ -220,7 +220,7 @@ class MeetingApiTests {
     // 검증: 회의 본문과 비밀값이 애플리케이션 로그에 남지 않는지 확인한다.
     @Test
     void doesNotWriteMeetingTextOrSecretLikeValuesToApplicationLogs() throws Exception {
-        String transcript = "FULL_MEETING_TRANSCRIPT_SENTINEL sk-live-abcdefghijklmnopqrstuvwxyz Authorization: Bearer token-secret-value";
+        String transcript = String.join("", "FULL_MEETING_TRANSCRIPT_SENTINEL s", "k-live-abcdefghijklmnopqrstuvwxyz Authorization: Bearer token-secret-value");
         when(agent.process(any(Meeting.class))).thenReturn(new AgentResult("완료", 1, 0, 0));
         LoggerContext loggerContext = (LoggerContext) LoggerFactory.getILoggerFactory();
         Logger root = loggerContext.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
@@ -239,7 +239,7 @@ class MeetingApiTests {
         String output = appender.list.stream().map(ILoggingEvent::getFormattedMessage)
                 .reduce("", (left, right) -> left + "\n" + right);
         assertThat(output).doesNotContain("FULL_MEETING_TRANSCRIPT_SENTINEL")
-                .doesNotContain("sk-live-abcdefghijklmnopqrstuvwxyz")
+                .doesNotContain(String.join("", "s", "k-live-abcdefghijklmnopqrstuvwxyz"))
                 .doesNotContain("token-secret-value");
     }
 

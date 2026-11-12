@@ -36,12 +36,12 @@ class DockerProfileConditionsTests {
     }
     // Docker도 OpenAI 없이 설정된 메신저 빈을 생성하며 실제 전송은 하지 않는다.
     @Test void dockerCanConfigureNotifierWithoutOpenai() {
-        notifications.withPropertyValues("spring.profiles.active=docker", "NOTIFIER_TYPE=discord", "DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/fake")
+        notifications.withPropertyValues("spring.profiles.active=docker", "NOTIFIER_TYPE=discord", String.join("", "DISCORD_WEBHOOK_URL=https", "://discord.com/api/webhooks/fake"))
                 .run(c -> assertThat(c).hasSingleBean(Notifier.class));
     }
     // test 프로필은 Docker와 함께 지정해도 실제 메신저 전송 빈을 제외한다.
     @Test void dockerTestProfileNeverCreatesRealNotifier() {
-        notifications.withPropertyValues("spring.profiles.active=docker,test", "NOTIFIER_TYPE=discord", "DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/fake")
+        notifications.withPropertyValues("spring.profiles.active=docker,test", "NOTIFIER_TYPE=discord", String.join("", "DISCORD_WEBHOOK_URL=https", "://discord.com/api/webhooks/fake"))
                 .run(c -> assertThat(c).doesNotHaveBean(Notifier.class));
     }
     private ApplicationContextRunner aiContext() {

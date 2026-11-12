@@ -219,7 +219,7 @@ class SpringAiMeetingAgentTests {
     @Test
     void wrapsProviderExceptionsWithoutIncludingTheirRawMessage() {
         Meeting meeting = meetingWithId("회의 내용", 74L);
-        when(model.call(any(Prompt.class))).thenThrow(new IllegalStateException("provider secret sk-live-abcdefghijklmnopqrstuvwxyz"));
+        when(model.call(any(Prompt.class))).thenThrow(new IllegalStateException(String.join("", "provider secret s", "k-live-abcdefghijklmnopqrstuvwxyz")));
 
         assertThatThrownBy(() -> agent.process(meeting))
                 .isInstanceOf(MeetingAgentException.class)

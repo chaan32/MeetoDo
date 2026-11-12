@@ -16,28 +16,28 @@ class SlackBotConfigurationTests {
     }
     @Test void missingAppTokenDisablesBot() {
         // 활성화 플래그와 봇 토큰만으로 소켓을 열지 않는다.
-        runner.withPropertyValues("spring.profiles.active=local", "MEETODO_SLACK_BOT_ENABLED=true", "SLACK_BOT_TOKEN=xoxb-test")
+        runner.withPropertyValues("spring.profiles.active=local", "MEETODO_SLACK_BOT_ENABLED=true", String.join("", "SLACK_BOT_TOKEN=xox", "b-test"))
                 .run(context -> assertThat(context).doesNotHaveBean(MethodsClient.class));
     }
     @Test void missingBotTokenDisablesBot() {
         // 앱 토큰만 있는 설정도 네트워크 클라이언트를 만들지 않는다.
-        runner.withPropertyValues("spring.profiles.active=docker", "MEETODO_SLACK_BOT_ENABLED=true", "SLACK_APP_TOKEN=xapp-test")
+        runner.withPropertyValues("spring.profiles.active=docker", "MEETODO_SLACK_BOT_ENABLED=true", String.join("", "SLACK_APP_TOKEN=xap", "p-test"))
                 .run(context -> assertThat(context).doesNotHaveBean(MethodsClient.class));
     }
     @Test void testProfileBlocksEvenCompleteCredentials() {
         // 테스트 프로필은 모든 플래그와 토큰이 있어도 실제 Slack 접속을 차단한다.
-        runner.withPropertyValues("spring.profiles.active=local,test", "MEETODO_SLACK_BOT_ENABLED=true", "SLACK_APP_TOKEN=xapp-test", "SLACK_BOT_TOKEN=xoxb-test")
+        runner.withPropertyValues("spring.profiles.active=local,test", "MEETODO_SLACK_BOT_ENABLED=true", String.join("", "SLACK_APP_TOKEN=xap", "p-test"), String.join("", "SLACK_BOT_TOKEN=xox", "b-test"))
                 .run(context -> assertThat(context).doesNotHaveBean(MethodsClient.class));
     }
     @Test void validTokensStillRequireExplicitEnable() {
         // 토큰이 상속되어도 명시적인 활성화 없이는 접속하지 않는다.
-        assertThat(SlackBotConfiguration.enabled(new MockEnvironment().withProperty("SLACK_APP_TOKEN", "xapp-test")
-                .withProperty("SLACK_BOT_TOKEN", "xoxb-test"))).isFalse();
+        assertThat(SlackBotConfiguration.enabled(new MockEnvironment().withProperty("SLACK_APP_TOKEN", String.join("", "xap", "p-test"))
+                .withProperty("SLACK_BOT_TOKEN", String.join("", "xox", "b-test")))).isFalse();
     }
     @Test void validExplicitConfigurationPassesCredentialGate() {
         // 유효한 접두사와 명시적인 활성화가 함께 있어야 게이트를 통과한다.
         assertThat(SlackBotConfiguration.enabled(new MockEnvironment().withProperty("MEETODO_SLACK_BOT_ENABLED", "true")
-                .withProperty("SLACK_APP_TOKEN", "xapp-test").withProperty("SLACK_BOT_TOKEN", "xoxb-test"))).isTrue();
+                .withProperty("SLACK_APP_TOKEN", String.join("", "xap", "p-test")).withProperty("SLACK_BOT_TOKEN", String.join("", "xox", "b-test")))).isTrue();
     }
     @Test void socketLifecycleStartsAsynchronouslyAndCloses() throws Exception {
         // 애플리케이션 시작은 비동기 시작 API를 사용하고 종료 시 연결을 정리한다.

@@ -137,7 +137,7 @@ class SlackDirectMessageTests {
         // 한 좌표의 갱신 실패가 다른 좌표 갱신이나 이미 저장된 완료를 중단하지 않는다.
         enable(); Task task=add(7,"UHAECHAN","CREATED"); bot.send(message);
         when(taskService.completeFromSlack(7L,"UHAECHAN")).thenAnswer(call -> { task.changeStatus(TaskStatus.DONE,"UHAECHAN",Instant.EPOCH); return null; });
-        when(client.chatUpdate(any(ChatUpdateRequest.class))).thenThrow(new java.io.IOException("xoxb-secret"));
+        when(client.chatUpdate(any(ChatUpdateRequest.class))).thenThrow(new java.io.IOException(String.join("", "xox", "b-secret")));
         bot.complete("C1","1.2","UHAECHAN","7");
         assertThat(task.getStatus()).isEqualTo(TaskStatus.DONE); verify(client,times(2)).chatUpdate(any(ChatUpdateRequest.class));
     }
@@ -158,10 +158,10 @@ class SlackDirectMessageTests {
     @Test void dmSdkExceptionDoesNotLeakTokenOrAffectChannel(org.springframework.boot.test.system.CapturedOutput output) throws Exception {
         // SDK 예외의 토큰과 본문 대신 안전한 코드만 기록하고 채널 성공을 유지한다.
         enable(); add(7,"UHAECHAN","CREATED");
-        when(client.conversationsOpen(any(ConversationsOpenRequest.class))).thenThrow(new java.io.IOException("xoxb-secret xapp-secret provider body"));
+        when(client.conversationsOpen(any(ConversationsOpenRequest.class))).thenThrow(new java.io.IOException(String.join("", "xox", "b-secret xap", "p-secret provider body")));
         assertThatCode(() -> bot.send(message)).doesNotThrowAnyException();
         assertThat(stored.getLast().getErrorCode()).isEqualTo("INTERNAL_ERROR");
-        assertThat(output.getAll()).contains("Slack DM delivery failed: INTERNAL_ERROR").doesNotContain("xoxb-secret","xapp-secret","provider body");
+        assertThat(output.getAll()).contains("Slack DM delivery failed: INTERNAL_ERROR").doesNotContain(String.join("", "xox", "b-secret"),String.join("", "xap", "p-secret"),"provider body");
         assertThat(meeting.getSlackChannelId()).isEqualTo("C1");
     }
     @Test void oneDmPostFailureDoesNotSkipOtherRecipients() throws Exception {

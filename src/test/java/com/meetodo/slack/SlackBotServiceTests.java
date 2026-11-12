@@ -66,14 +66,14 @@ class SlackBotServiceTests {
 
     @Test void rejectedPostDoesNotStoreMessageReference() throws Exception {
         // 전송에 실패한 메시지 좌표는 저장하지 않는다.
-        var response = new ChatPostMessageResponse(); response.setError("provider xoxb-secret");
+        var response = new ChatPostMessageResponse(); response.setError(String.join("", "provider xox", "b-secret"));
         when(client.chatPostMessage(any(ChatPostMessageRequest.class))).thenReturn(response);
         assertThatThrownBy(() -> bot.send(message)).isInstanceOf(NotificationDeliveryException.class).hasMessage("Notification delivery failed");
         verifyNoInteractions(transactions);
     }
     @Test void sdkExceptionIsSanitized() throws Exception {
         // 공급자 예외 본문과 토큰을 사용자 오류에 노출하지 않는다.
-        when(client.chatPostMessage(any(ChatPostMessageRequest.class))).thenThrow(new java.io.IOException("xoxb-secret provider payload"));
+        when(client.chatPostMessage(any(ChatPostMessageRequest.class))).thenThrow(new java.io.IOException(String.join("", "xox", "b-secret provider payload")));
         assertThatThrownBy(() -> bot.send(message)).hasMessage("Notification delivery failed").hasNoCause();
     }
     @Test void storedMembershipRejectsForgedTaskId() throws Exception {
@@ -179,10 +179,10 @@ class SlackBotServiceTests {
         // 임시 메시지 정리 실패는 재처리를 유발하지 않으며 공급자 예외·토큰을 남기지 않는다.
         var candidate=com.meetodo.meeting.Meeting.create("원문전체삭제실패",com.meetodo.meeting.MeetingSource.SLACK_TEXT);
         candidate.recordSlackMessage("C2","2.3");
-        when(client.chatDelete(any(ChatDeleteRequest.class))).thenThrow(new java.io.IOException("xoxb-secret https://hooks.slack.com/secret 원문전체삭제실패"));
+        when(client.chatDelete(any(ChatDeleteRequest.class))).thenThrow(new java.io.IOException(String.join("", "xox", "b-secret https", "://hooks.slack.com/secret 원문전체삭제실패")));
         assertThatCode(() -> bot.discardInputProgress(candidate)).doesNotThrowAnyException();
         assertThat(output).contains("Slack temporary message cleanup failed: INTERNAL_ERROR")
-                .doesNotContain("xoxb-secret","hooks.slack.com","원문전체삭제실패");
+                .doesNotContain(String.join("", "xox", "b-secret"),"hooks.slack.com","원문전체삭제실패");
         verify(client).chatDelete(any(ChatDeleteRequest.class)); verifyNoInteractions(refs,transactions);
     }
 

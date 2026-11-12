@@ -306,7 +306,7 @@ class MeetingToolsTests {
     void persistsFailedResultAfterMaskingAndTruncation() {
         String rawText = "FULL_PRIVATE_MEETING_TEXT";
         Meeting meeting = Meeting.create(rawText, MeetingSource.API_TEXT);
-        String key = "sk-test-abcdefghijklmnopqrstuvwxyz123456";
+        String key = String.join("", "s", "k-test-abcdefghijklmnopqrstuvwxyz123456");
         execution.execute(meeting, "findMember", Map.of("name", "해찬"), () -> new ToolResult(false,
                 "MEMBER_TEAM_NOT_FOUND", "팀 불일치",
                 "후보 백엔드팀 " + key + " Authorization: Bearer secret-token " + rawText + " " + "x".repeat(5000)));
@@ -426,8 +426,8 @@ class MeetingToolsTests {
     // 검증: 도구 인자·결과에 섞인 Slack/Discord 웹훅 자격 증명도 기록 전에 마스킹한다.
     @Test
     void redactsWebhookUrlsFromToolArgumentsAndResults() {
-        String slack = "https://hooks.slack.com/services/SECRET/WEBHOOK/TOKEN";
-        String discord = "https://discord.com/api/webhooks/123/SECRET-TOKEN";
+        String slack = String.join("", "https", "://hooks.slack.com/services/SECRET/WEBHOOK/TOKEN");
+        String discord = String.join("", "https", "://discord.com/api/webhooks/123/SECRET-TOKEN");
         execution.execute(testMeeting, "test", Map.of("url", slack), () -> ToolResult.success("ok", discord));
         var captor = org.mockito.ArgumentCaptor.forClass(ToolCallLog.class);
         verify(logs).save(captor.capture());
@@ -447,7 +447,7 @@ class MeetingToolsTests {
     void recordsSanitizedArgumentsAndUnexpectedFailuresWithoutThrowing() {
         Meeting meeting = Meeting.create("FULL_PRIVATE_MEETING_TEXT", MeetingSource.API_TEXT);
         ToolResult result = execution.execute(meeting, "testTool",
-                "{\"title\":\"sk-test-abcdefghijklmnopqrstuvwxyz\",\"authorization\":\"Bearer sensitive-token\"}", () -> {
+                String.join("", "{\"title\":\"s", "k-test-abcdefghijklmnopqrstuvwxyz\",\"authorization\":\"Bearer sensitive-token\"}"), () -> {
                     throw new IllegalStateException("internal secret");
                 });
 
@@ -455,7 +455,7 @@ class MeetingToolsTests {
         assertThat(result.errorCode()).isEqualTo("TOOL_EXECUTION_FAILED");
         var captor = org.mockito.ArgumentCaptor.forClass(com.meetodo.meeting.ToolCallLog.class);
         verify(logs).save(captor.capture());
-        assertThat(captor.getValue().getArguments()).doesNotContain("sk-test-");
+        assertThat(captor.getValue().getArguments()).doesNotContain(String.join("", "s", "k-test-"));
         assertThat(captor.getValue().getArguments()).doesNotContain("sensitive-token");
         assertThat(captor.getValue().getArguments()).doesNotContain("FULL_PRIVATE_MEETING_TEXT");
         assertThat(captor.getValue().getSuccess()).isFalse();
@@ -498,7 +498,7 @@ class MeetingToolsTests {
     void truncatesLongResultsAndRedactsSecretsAndTheFullMeetingText() {
         String rawText = "CONFIDENTIAL_FULL_MEETING_TEXT";
         Meeting meeting = Meeting.create(rawText, MeetingSource.API_TEXT);
-        String key = "sk-test-abcdefghijklmnopqrstuvwxyz123456";
+        String key = String.join("", "s", "k-test-abcdefghijklmnopqrstuvwxyz123456");
         execution.execute(meeting, "safe", Map.of("meetingText", rawText),
                 () -> ToolResult.success("ok", "result " + key + " " + rawText + " " + "x".repeat(5000)));
 

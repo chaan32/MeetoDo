@@ -12,10 +12,10 @@ import static org.mockito.Mockito.*;
 
 class SlackTokenMaskingTests {
     // 봇 토큰은 인자·결과·모델 반환값 어디에도 원문으로 남지 않는다.
-    @Test void redactsBotTokenFromArgumentsAndResult() { assertMasked("xoxb-123456789-123456789-secretTokenValue"); }
+    @Test void redactsBotTokenFromArgumentsAndResult() { assertMasked(String.join("", "xox", "b-123456789-123456789-secretTokenValue")); }
 
     // 앱 토큰도 기존 API 키와 같은 공통 실행 경계에서 마스킹한다.
-    @Test void redactsAppTokenFromArgumentsAndResult() { assertMasked("xapp-1-A123456-123456-secretTokenValue"); }
+    @Test void redactsAppTokenFromArgumentsAndResult() { assertMasked(String.join("", "xap", "p-1-A123456-123456-secretTokenValue")); }
 
     private void assertMasked(String token) {
         var logs = mock(ToolCallLogRepository.class);

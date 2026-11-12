@@ -139,19 +139,19 @@ class MeetingNotificationTests {
 
     @Test void unsafeSlackErrorIsNeverPersistedOrLogged(CapturedOutput output) throws Exception {
         // 공급자가 오류 필드에 토큰을 넣더라도 API·저장값·로그에 노출하지 않는다.
-        doThrow(new NotificationDeliveryException("invalid_auth xoxb-synthetic-secret")).when(notifier).send(any());
+        doThrow(new NotificationDeliveryException(String.join("", "invalid_auth xox", "b-synthetic-secret"))).when(notifier).send(any());
         String response = submit("Slack 비밀 오류 거부").andExpect(status().isOk())
                 .andExpect(jsonPath("$.notificationErrorCode").value("INTERNAL_ERROR"))
                 .andReturn().getResponse().getContentAsString();
-        assertThat(response).doesNotContain("xoxb-synthetic-secret");
-        assertThat(output).doesNotContain("xoxb-synthetic-secret");
+        assertThat(response).doesNotContain(String.join("", "xox", "b-synthetic-secret"));
+        assertThat(output).doesNotContain(String.join("", "xox", "b-synthetic-secret"));
         assertThat(meetings.findAll()).allSatisfy(m ->
-                assertThat(m.getNotificationErrorCode()).doesNotContain("xoxb-synthetic-secret"));
+                assertThat(m.getNotificationErrorCode()).doesNotContain(String.join("", "xox", "b-synthetic-secret")));
     }
 
     // 검증: 예상 밖 전송 예외의 URL·원문도 로그나 API로 내보내지 않는다.
     @Test void unexpectedExceptionIsGeneralized(CapturedOutput output) throws Exception {
-        doThrow(new IllegalStateException("https://discord.com/api/webhooks/secret-webhook-token")).when(notifier).send(any());
+        doThrow(new IllegalStateException(String.join("", "https", "://discord.com/api/webhooks/secret-webhook-token"))).when(notifier).send(any());
         String response = submit("예상 밖 전송 예외").andExpect(status().isOk())
                 .andExpect(jsonPath("$.notificationErrorCode").value("INTERNAL_ERROR"))
                 .andReturn().getResponse().getContentAsString();

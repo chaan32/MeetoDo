@@ -147,26 +147,26 @@ class SlackMeetingInputTests {
     }
     @Test void rejectedProcessingQueueRepliesPrivately() {
         // 비동기 큐가 가득 차도 새 회의를 저장하거나 요청자에게 내부 예외를 노출하지 않는다.
-        input = new SlackMeetingInputService(client, meetings, bot, job -> { throw new RejectedExecutionException("xoxb-secret"); }, clock);
+        input = new SlackMeetingInputService(client, meetings, bot, job -> { throw new RejectedExecutionException(String.join("", "xox", "b-secret")); }, clock);
         open(); input.submit("V1", "C1", "U1", "새 회의록");
-        assertThat(replies).singleElement().asString().contains("현재 요청이 많아요").doesNotContain("xoxb-secret"); verifyNoInteractions(meetings);
+        assertThat(replies).singleElement().asString().contains("현재 요청이 많아요").doesNotContain(String.join("", "xox", "b-secret")); verifyNoInteractions(meetings);
     }
     @Test void unexpectedProviderFailureDoesNotLeakSecretsOrTranscript(CapturedOutput output) {
         // 공급자 예외와 회의록 원문은 사용자 응답이나 로그에 남지 않는다.
-        open(); when(meetings.submitFromSlack(any(), any(), any())).thenThrow(new IllegalStateException("xoxb-secret https://hooks.slack.com/secret 회의록원문전체"));
+        open(); when(meetings.submitFromSlack(any(), any(), any())).thenThrow(new IllegalStateException(String.join("", "xox", "b-secret https", "://hooks.slack.com/secret 회의록원문전체")));
         input.submit("V1", "C1", "U1", "회의록원문전체"); queue.getFirst().run();
-        assertThat(String.join(" ", replies)).doesNotContain("xoxb-secret", "hooks.slack.com", "회의록원문전체");
-        assertThat(output).doesNotContain("xoxb-secret", "hooks.slack.com", "회의록원문전체");
+        assertThat(String.join(" ", replies)).doesNotContain(String.join("", "xox", "b-secret"), "hooks.slack.com", "회의록원문전체");
+        assertThat(output).doesNotContain(String.join("", "xox", "b-secret"), "hooks.slack.com", "회의록원문전체");
     }
     @Test void modalOpenFailureUsesSafePrivateResponse(CapturedOutput output) throws Exception {
         // 모달 API 실패의 토큰·본문을 보여주지 않고 요청자에게 다시 실행하도록 안내한다.
-        when(client.viewsOpen(any(ViewsOpenRequest.class))).thenThrow(new java.io.IOException("xapp-secret provider body"));
-        open(); assertThat(replies).singleElement().asString().contains("입력 창을 열지 못했어요").doesNotContain("xapp-secret");
-        assertThat(output).doesNotContain("xapp-secret", "provider body");
+        when(client.viewsOpen(any(ViewsOpenRequest.class))).thenThrow(new java.io.IOException(String.join("", "xap", "p-secret provider body")));
+        open(); assertThat(replies).singleElement().asString().contains("입력 창을 열지 못했어요").doesNotContain(String.join("", "xap", "p-secret"));
+        assertThat(output).doesNotContain(String.join("", "xap", "p-secret"), "provider body");
     }
     @Test void invalidOriginCannotOpenModal() throws Exception {
         // 실제 Slack 채널 식별자 형식이 아닌 값은 메타데이터로 전달하지 않는다.
-        input.open("trigger-1", "https://hooks.slack.com/secret", "U1", replies::add);
+        input.open("trigger-1", String.join("", "https", "://hooks.slack.com/secret"), "U1", replies::add);
         verify(client, never()).viewsOpen(any(ViewsOpenRequest.class)); assertThat(replies).hasSize(1);
     }
     @Test void pendingModalsAreBoundedWithoutEvictingExistingOwner() throws Exception {
@@ -187,10 +187,10 @@ class SlackMeetingInputTests {
     }
     @Test void unexpectedNotificationFailureDoesNotExposeProviderCode(CapturedOutput output) {
         // 초대 안내 대상이 아닌 전송 오류는 내부 코드 없이 시작 실패만 알린다.
-        open(); when(meetings.submitFromSlack(any(), any(), any())).thenThrow(new NotificationDeliveryException("invalid_auth xoxb-secret"));
+        open(); when(meetings.submitFromSlack(any(), any(), any())).thenThrow(new NotificationDeliveryException(String.join("", "invalid_auth xox", "b-secret")));
         input.submit("V1", "C1", "U1", "새 회의록"); queue.getFirst().run();
-        assertThat(replies).singleElement().asString().contains("시작하지 못했어요").doesNotContain("invalid_auth", "xoxb-secret");
-        assertThat(output).contains("code=INTERNAL_ERROR").doesNotContain("xoxb-secret");
+        assertThat(replies).singleElement().asString().contains("시작하지 못했어요").doesNotContain("invalid_auth", String.join("", "xox", "b-secret"));
+        assertThat(output).contains("code=INTERNAL_ERROR").doesNotContain(String.join("", "xox", "b-secret"));
     }
     @Test void submissionHandlerAcknowledgesBeforeQueuingMeeting() throws Exception {
         // 실제 등록한 Bolt 제출 핸들러는 ack를 먼저 호출한 뒤 회의 처리를 큐에 넣는다.

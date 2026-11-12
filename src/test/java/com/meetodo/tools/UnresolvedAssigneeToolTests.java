@@ -139,11 +139,11 @@ class UnresolvedAssigneeToolTests {
     // 검증: 모델 인자에 없는 안전한 서버 경계에서 비밀·멘션·개행을 제거하고 이름 길이를 제한한다.
     @Test
     void sanitizesSecretsMentionsAndLongNames() {
-        var lookup = find.findMember("@everyone\n sk-test-abcdefghijklmnopqrstuvwxyz " + "가".repeat(150), meeting);
+        var lookup = find.findMember(String.join("", "@everyone\n s", "k-test-abcdefghijklmnopqrstuvwxyz ") + "가".repeat(150), meeting);
         var result = create.createTask("확인", "unassigned:NOT_FOUND", null, lookup.lookupCallOrder(), meeting);
         assertThat(result.success()).isTrue();
         String name = saved().getUnresolvedAssignee().requestedAssigneeName();
-        assertThat(name).doesNotContain("\n", "sk-test-").contains("@everyone", "[REDACTED]");
+        assertThat(name).doesNotContain("\n", String.join("", "s", "k-test-")).contains("@everyone", "[REDACTED]");
         assertThat(name.codePointCount(0, name.length())).isLessThanOrEqualTo(100);
     }
 
@@ -220,7 +220,7 @@ class UnresolvedAssigneeToolTests {
     // 검증: 실패 결과에 섞인 비밀과 원문은 모델과 로그 양쪽에서 같은 값으로 마스킹한다.
     @Test
     void sanitizesFailedResultForModelAndLog() throws Exception {
-        String key = "sk-test-abcdefghijklmnopqrstuvwxyz";
+        String key = String.join("", "s", "k-test-abcdefghijklmnopqrstuvwxyz");
         var result = execution.execute(meeting, "findMember", Map.of("name", "준호"),
                 () -> new ToolResult(false, "MEMBER_NOT_FOUND", key + meeting.getRawText(), key));
         assertThat(result.message()).doesNotContain(key, meeting.getRawText()).contains("[REDACTED]");

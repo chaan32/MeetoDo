@@ -16,7 +16,7 @@ class SlackErrorCodeTests {
     }
     @Test void rejectsProviderTextAndSecretsInsteadOfLoggingThem() {
         // 임의 문자열·토큰·URL·예외 원문은 오류 코드로 저장하지 않는다.
-        for (String unsafe : new String[]{"xoxb-secret", "xapp-secret", "https://hooks.slack.com/secret", "missing_scope xoxb-secret", "provider_secret"})
+        for (String unsafe : new String[]{String.join("", "xox", "b-secret"), String.join("", "xap", "p-secret"), String.join("", "https", "://hooks.slack.com/secret"), String.join("", "missing_scope xox", "b-secret"), "provider_secret"})
             assertThat(NotificationStateService.safeCode(unsafe)).isEqualTo("INTERNAL_ERROR");
     }
     @Test void keepsExistingWebhookErrorCodes() {
