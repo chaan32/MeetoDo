@@ -5,6 +5,7 @@ import java.util.Map;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.meetodo.member.Member;
+import com.meetodo.member.MemberNames;
 import com.meetodo.member.MemberRepository;
 import com.meetodo.meeting.Meeting;
 import com.meetodo.task.Task;
@@ -43,10 +44,7 @@ public class FindTasksTool {
     }
 
     public ToolResult findTasks(String assignee, String title, Meeting meeting) {
-        Member member = null;
-        if (assignee != null && !assignee.isBlank())
-            member = members.findAllByNameOrderByIdAsc(assignee.trim()).stream().findFirst().orElse(null);
-        return findTasks(member == null ? null : member.getId(), assignee, title, meeting);
+        return findTasks(null, assignee, title, meeting);
     }
 
     public ToolResult findTasks(Long assigneeId, String assigneeName, String title, Meeting meeting) {
@@ -69,10 +67,10 @@ public class FindTasksTool {
             Member member = null;
             if (selectedId != null) {
                 member = members.findById(selectedId).orElse(null);
-                if (member == null || (name != null && !name.isBlank() && !member.getName().equals(name.trim())))
+                if (member == null || (name != null && !name.isBlank() && MemberNames.find(members, name).stream().noneMatch(candidate -> candidate.getId().equals(selectedId))))
                     return ToolResult.error("INVALID_ASSIGNEE", "findMember 후보의 ID와 이름을 확인하세요.");
             } else if (name != null && !name.isBlank()) {
-                List<Member> found = members.findAllByNameOrderByIdAsc(name.trim());
+                List<Member> found = MemberNames.find(members, name);
                 if (found.isEmpty()) return ToolResult.error("MEMBER_NOT_FOUND", "등록된 팀원을 찾지 못했습니다.");
                 if (found.size() > 1) return ToolResult.error("AMBIGUOUS_MEMBER", "담당자 ID로 지정해야 합니다.");
                 member = found.getFirst();

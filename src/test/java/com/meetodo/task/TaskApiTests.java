@@ -34,7 +34,7 @@ class TaskApiTests {
         mentionRepository.deleteAll();
         jdbc.update("delete from tasks");
         memberRepository.deleteAll();
-        memberRepository.save(new Member("민수", "U-MINSU"));
+        memberRepository.save(new Member("김", "민수", "미지정", "U-MINSU"));
     }
 
     // 검증: createsAndReturnsTaskWithMemberAndUnassignedTask 시나리오의 기대 동작을 확인한다.
@@ -46,7 +46,7 @@ class TaskApiTests {
                                 """))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").isNumber())
-                .andExpect(jsonPath("$.assignee.name").value("민수"))
+                .andExpect(jsonPath("$.assignee.name").value("김민수"))
                 .andExpect(jsonPath("$.status").value("TODO"))
                 .andExpect(jsonPath("$.mentionCount").value(0))
                 .andExpect(jsonPath("$.dueDate").value("2026-11-20"))
@@ -141,8 +141,8 @@ class TaskApiTests {
     // 검증: 같은 이름 팀원을 저장하고 이름만 요청한 경우 모호성 오류를, ID 요청은 정상 등록을 반환한다.
     @Test
     void rejectsAmbiguousAssigneeNameAndAcceptsMemberId() throws Exception {
-        Member backend = memberRepository.save(new Member("지영", "백엔드팀", "U-BACKEND-JIYOUNG"));
-        memberRepository.save(new Member("지영", "디자인팀", "U-DESIGN-JIYOUNG"));
+        Member backend = memberRepository.save(new Member("이", "지영", "백엔드팀", "U-BACKEND-JIYOUNG"));
+        memberRepository.save(new Member("이", "지영", "디자인팀", "U-DESIGN-JIYOUNG"));
 
         mvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"화면 검토\",\"assigneeName\":\"지영\"}"))
@@ -162,8 +162,8 @@ class TaskApiTests {
     // 검증: assigneeId 필터는 동명이인 중 지정한 한 명의 Task만 반환한다.
     @Test
     void filtersTasksByAssigneeIdWhenNamesAreAmbiguous() throws Exception {
-        Member backend = memberRepository.save(new Member("지영", "백엔드팀", "U-BACKEND-JIYOUNG"));
-        memberRepository.save(new Member("지영", "디자인팀", "U-DESIGN-JIYOUNG"));
+        Member backend = memberRepository.save(new Member("이", "지영", "백엔드팀", "U-BACKEND-JIYOUNG"));
+        memberRepository.save(new Member("이", "지영", "디자인팀", "U-DESIGN-JIYOUNG"));
         mvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"API 테스트\",\"assigneeId\":" + backend.getId() + "}"))
                 .andExpect(status().isCreated());

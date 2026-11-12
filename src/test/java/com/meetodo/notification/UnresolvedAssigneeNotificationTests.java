@@ -15,16 +15,16 @@ class UnresolvedAssigneeNotificationTests {
     // 동명이인 경고가 두 플랫폼의 실제 JSON 본문에 이름과 후보 팀을 포함한다.
     @Test void ambiguousWarningIncludesNameAndCandidateTeamsInBothPlatforms() throws Exception {
         assertPayloads(new UnresolvedAssignee("AMBIGUOUS", "지영", null, List.of(
-                new UnresolvedAssignee.Candidate(2L, "지영", "백엔드팀"),
-                new UnresolvedAssignee.Candidate(3L, "지영", "디자인팀")), 0),
+                new UnresolvedAssignee.Candidate(2L, "이지영", "백엔드팀"),
+                new UnresolvedAssignee.Candidate(3L, "이지영", "디자인팀")), 0),
                 "동명이인 확인 필요: \"지영\" (후보: 백엔드팀, 디자인팀)");
     }
 
     // 팀 불일치 경고에 요청 팀과 실제 등록 팀을 함께 표시한다.
     @Test void mismatchWarningIncludesRequestedAndRegisteredTeamsInBothPlatforms() throws Exception {
         assertPayloads(new UnresolvedAssignee("TEAM_MISMATCH", "해찬", "프론트엔드팀", List.of(
-                new UnresolvedAssignee.Candidate(4L, "해찬", "백엔드팀")), 0),
-                "팀 불일치 확인 필요: \"프론트엔드팀 해찬\" (등록: 백엔드팀 해찬)");
+                new UnresolvedAssignee.Candidate(4L, "전해찬", "백엔드팀")), 0),
+                "팀 불일치 확인 필요: \"프론트엔드팀 해찬\" (등록: 백엔드팀 전해찬)");
     }
 
     // 미등록 담당자 경고가 두 플랫폼에 요청 이름을 보존한다.

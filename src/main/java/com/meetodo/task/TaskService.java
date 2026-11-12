@@ -5,6 +5,7 @@ import java.time.LocalDate;
 import java.util.Map;
 
 import com.meetodo.member.Member;
+import com.meetodo.member.MemberNames;
 import com.meetodo.member.MemberRepository;
 import com.meetodo.meeting.Meeting;
 import com.meetodo.task.dto.CreateTaskRequest;
@@ -45,7 +46,7 @@ public class TaskService {
             return byId;
         }
         if (!StringUtils.hasText(assigneeName)) return null;
-        List<Member> matches = members.findAllByNameOrderByIdAsc(assigneeName.trim());
+        List<Member> matches = MemberNames.find(members, assigneeName);
         if (matches.isEmpty()) throw new ResourceNotFoundException("MEMBER_NOT_FOUND", "Assignee was not found.");
         if (matches.size() > 1) throw new AmbiguousMemberException(matches);
         return matches.getFirst();
@@ -83,13 +84,13 @@ public class TaskService {
         if (assigneeId != null) {
             Member assignee = members.findById(assigneeId).orElseThrow(() -> new ResourceNotFoundException(
                     "MEMBER_NOT_FOUND", "Assignee was not found."));
-            if (StringUtils.hasText(assigneeName) && !assignee.getName().equals(assigneeName.trim()))
+            if (StringUtils.hasText(assigneeName) && MemberNames.find(members, assigneeName).stream().noneMatch(candidate -> candidate.getId().equals(assignee.getId())))
                 throw new ResourceNotFoundException("ASSIGNEE_MISMATCH", "assigneeId와 assignee 이름이 일치하지 않습니다.");
             result = tasks.findAllByAssigneeOrderByCreatedAtDesc(assignee);
         } else if (!StringUtils.hasText(assigneeName)) {
             result = tasks.findAllByOrderByCreatedAtDesc();
         } else {
-            List<Member> matchedMembers = members.findAllByNameOrderByIdAsc(assigneeName.trim());
+            List<Member> matchedMembers = MemberNames.find(members, assigneeName);
             if (matchedMembers.isEmpty()) throw new ResourceNotFoundException("MEMBER_NOT_FOUND", "Assignee was not found.");
             result = matchedMembers.stream().flatMap(member -> tasks.findAllByAssigneeOrderByCreatedAtDesc(member).stream()).toList();
         }

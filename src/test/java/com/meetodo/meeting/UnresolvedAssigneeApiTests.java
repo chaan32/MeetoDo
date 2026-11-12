@@ -38,8 +38,8 @@ class UnresolvedAssigneeApiTests {
 
     @BeforeEach void clean() {
         mentions.deleteAll(); logs.deleteAll(); tasks.deleteAll(); meetings.deleteAll(); members.deleteAll();
-        members.save(new Member("지영", "백엔드팀", "U-BACK"));
-        members.save(new Member("지영", "디자인팀", "U-DESIGN"));
+        members.save(new Member("이", "지영", "백엔드팀", "U-BACK"));
+        members.save(new Member("이", "지영", "디자인팀", "U-DESIGN"));
     }
 
     // 재현: 동명이인으로 미정 등록된 Task 조회에 원래 이름과 후보가 있어야 한다.
@@ -60,14 +60,14 @@ class UnresolvedAssigneeApiTests {
     }
     // 팀 불일치 스냅샷은 Task와 회의 응답에 요청 팀 및 실제 후보를 함께 보존한다.
     @Test void teamMismatchPersistsAndAppearsInTaskAndMeetingApis() throws Exception {
-        members.save(new Member("해찬", "백엔드팀", "U-HAECHAN"));
+        members.save(new Member("전", "해찬", "백엔드팀", "U-HAECHAN"));
         configure("해찬", "프론트엔드팀", "TEAM_MISMATCH", "체크리스트 공유");
         String body = postMeeting("프론트엔드팀 해찬은 체크리스트를 공유한다.");
         long id = mapper.readTree(body).path("meetingId").asLong();
         mvc.perform(get("/api/meetings/{id}", id))
                 .andExpect(jsonPath("$.tasks[0].unresolvedAssignee.requestedTeam").value("프론트엔드팀"))
                 .andExpect(jsonPath("$.tasks[0].unresolvedAssignee.candidates[0].team").value("백엔드팀"))
-                .andExpect(jsonPath("$.tasks[0].warning").value("팀 불일치 확인 필요: \"프론트엔드팀 해찬\" (등록: 백엔드팀 해찬)"));
+                .andExpect(jsonPath("$.tasks[0].warning").value("팀 불일치 확인 필요: \"프론트엔드팀 해찬\" (등록: 백엔드팀 전해찬)"));
         mvc.perform(get("/api/tasks"))
                 .andExpect(jsonPath("$[0].unresolvedAssignee.reason").value("TEAM_MISMATCH"))
                 .andExpect(jsonPath("$[0].unresolvedAssignee.requestedAssigneeName").value("해찬"));
@@ -100,7 +100,7 @@ class UnresolvedAssigneeApiTests {
         var snapshot = tasks.findAll().getFirst().getUnresolvedAssignee();
         org.assertj.core.api.Assertions.assertThat(snapshot.candidates()).hasSize(2);
         org.assertj.core.api.Assertions.assertThat(snapshot.requestedAssigneeName()).isEqualTo("지영");
-        members.save(new Member("지영", "기획팀", "U-PLAN"));
+        members.save(new Member("이", "지영", "기획팀", "U-PLAN"));
         mvc.perform(get("/api/tasks"))
                 .andExpect(jsonPath("$[0].unresolvedAssignee.candidates.length()").value(2));
     }

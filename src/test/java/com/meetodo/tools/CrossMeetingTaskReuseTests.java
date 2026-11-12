@@ -46,7 +46,7 @@ class CrossMeetingTaskReuseTests {
         logs.deleteAll();
         meetings.deleteAll();
         members.deleteAll();
-        assignee = members.save(new Member("민수", "U-MINSU"));
+        assignee = members.save(new Member("김", "민수", "미지정", "U-MINSU"));
         originalMeeting = meetings.save(Meeting.create("첫 회의", MeetingSource.API_TEXT));
         repeatedMeeting = meetings.save(Meeting.create("끝에 #만 붙은 회의", MeetingSource.API_TEXT));
         execution = new ToolExecutionService(logs, new ObjectMapper());

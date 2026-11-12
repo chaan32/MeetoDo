@@ -16,7 +16,10 @@ public class Member {
     private Long id;
 
     @Column(nullable = false, length = 80)
-    private String name;
+    private String familyName;
+
+    @Column(nullable = false, length = 80)
+    private String givenName;
 
     @Column(nullable = false, length = 80)
     private String team;
@@ -27,18 +30,18 @@ public class Member {
     protected Member() {
     }
 
-    public Member(String name, String slackUserId) {
-        this(name, "미지정", slackUserId);
-    }
-
-    public Member(String name, String team, String slackUserId) {
-        this.name = name;
+    public Member(String familyName, String givenName, String team, String slackUserId) {
+        this.familyName = java.util.Objects.requireNonNull(familyName);
+        this.givenName = java.util.Objects.requireNonNull(givenName);
         this.team = team;
         this.slackUserId = slackUserId;
     }
 
     public Long getId() { return id; }
-    public String getName() { return name; }
+    public String getFamilyName() { return familyName; }
+    public String getGivenName() { return givenName; }
+    public String getFullName() { return familyName + givenName; }
+    public String getName() { return getFullName(); }
     public String getTeam() { return team; }
     public String getSlackUserId() { return slackUserId; }
 }

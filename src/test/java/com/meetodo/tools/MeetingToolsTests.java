@@ -62,8 +62,8 @@ class MeetingToolsTests {
     // 검증: returnsMemberForExactNameAndNameWithWhitespace 시나리오의 기대 동작을 확인한다.
     @Test
     void returnsMemberForExactNameAndNameWithWhitespace() {
-        Member member = new Member("민수", "U-DEV-MINSU");
-        when(members.findAllByNameOrderByIdAsc("민수")).thenReturn(List.of(member));
+        Member member = new Member("김", "민수", "미지정", "U-DEV-MINSU");
+        when(members.findAllByGivenNameOrderByIdAsc("민수")).thenReturn(List.of(member));
 
         ToolResult result = findMember.findMember(" 민수 ", testMeeting);
 
@@ -75,7 +75,7 @@ class MeetingToolsTests {
     // 검증: returnsNotFoundResultInsteadOfThrowingForUnknownMember 시나리오의 기대 동작을 확인한다.
     @Test
     void returnsNotFoundResultInsteadOfThrowingForUnknownMember() {
-        when(members.findAllByNameOrderByIdAsc("없는 사람")).thenReturn(List.of());
+        when(members.findAllByGivenNameOrderByIdAsc("없는 사람")).thenReturn(List.of());
 
         ToolResult result = findMember.findMember("없는 사람", testMeeting);
 
@@ -93,8 +93,8 @@ class MeetingToolsTests {
     // 검증: 동명이인 조회는 임의의 첫 항목 대신 모든 후보 ID와 팀을 반환한다.
     @Test
     void returnsAllCandidatesWhenMemberNameIsAmbiguous() {
-        when(members.findAllByNameOrderByIdAsc("지영")).thenReturn(List.of(
-                new Member("지영", "백엔드팀", "U-BACKEND"), new Member("지영", "디자인팀", "U-DESIGN")));
+        when(members.findAllByGivenNameOrderByIdAsc("지영")).thenReturn(List.of(
+                new Member("이", "지영", "백엔드팀", "U-BACKEND"), new Member("이", "지영", "디자인팀", "U-DESIGN")));
 
         ToolResult result = findMember.findMember("지영", testMeeting);
 
@@ -107,7 +107,7 @@ class MeetingToolsTests {
     @Test
     void findsTasksByExactAssigneeAndTitleIncludingUnassigned() {
         ReflectionTestUtils.setField(testMeeting, "id", 31L);
-        Member member = new Member("민수", "U-DEV-MINSU");
+        Member member = new Member("김", "민수", "미지정", "U-DEV-MINSU");
         ReflectionTestUtils.setField(member, "id", 1L);
         when(members.findById(1L)).thenReturn(Optional.of(member));
         when(logs.findAllByMeetingIdOrderByCallOrderAsc(31L)).thenReturn(List.of(ToolCallLog.success(testMeeting,
@@ -115,7 +115,7 @@ class MeetingToolsTests {
         Task exact = Task.create("설계서 작성", member, null);
         Task unassigned = Task.create("설계서 작성", null, null);
         Task otherTitle = Task.create("다른 제목", member, null);
-        when(members.findAllByNameOrderByIdAsc("민수")).thenReturn(List.of(member));
+        when(members.findAllByGivenNameOrderByIdAsc("민수")).thenReturn(List.of(member));
         when(tasks.findAllByAssigneeAndStatusOrderByCreatedAtDesc(member, TaskStatus.TODO))
                 .thenReturn(List.of(exact, otherTitle));
         when(tasks.findAllByAssigneeIsNullAndStatusOrderByCreatedAtDesc(TaskStatus.TODO))
@@ -134,7 +134,7 @@ class MeetingToolsTests {
     void createsTaskForMeetingOrLeavesUnknownAssigneeUnassigned() {
         Meeting meeting = Meeting.create("private meeting raw text", MeetingSource.API_TEXT);
         ReflectionTestUtils.setField(meeting, "id", 42L);
-        Member member = new Member("민수", "U-DEV-MINSU");
+        Member member = new Member("김", "민수", "미지정", "U-DEV-MINSU");
         ReflectionTestUtils.setField(member, "id", 1L);
         when(members.findById(1L)).thenReturn(Optional.of(member));
         when(logs.findAllByMeetingIdOrderByCallOrderAsc(42L)).thenReturn(List.of(ToolCallLog.success(meeting,
@@ -186,8 +186,8 @@ class MeetingToolsTests {
     @Test
     void rejectsNonCandidateIdsAndNameOnlyAmbiguousAssignments() {
         when(members.findById(999L)).thenReturn(Optional.empty());
-        when(members.findAllByNameOrderByIdAsc("지영")).thenReturn(List.of(
-                new Member("지영", "백엔드팀", "U-BACKEND"), new Member("지영", "디자인팀", "U-DESIGN")));
+        when(members.findAllByGivenNameOrderByIdAsc("지영")).thenReturn(List.of(
+                new Member("이", "지영", "백엔드팀", "U-BACKEND"), new Member("이", "지영", "디자인팀", "U-DESIGN")));
 
         assertThat(createTask.createTask("API 확인", "member:999", null, testMeeting).errorCode())
                 .isEqualTo("INVALID_ASSIGNEE");
@@ -222,7 +222,7 @@ class MeetingToolsTests {
         ToolCallLog previousFailure = ToolCallLog.failure(meeting, "createTask", arguments,
                 "PAST_DUE_DATE", "past date", 1, 1);
         when(logs.findAllByMeetingIdOrderByCallOrderAsc(61L)).thenReturn(List.of(previousFailure));
-        when(members.findAllByNameOrderByIdAsc("민수")).thenReturn(List.of(new Member("민수", "U-DEV-MINSU")));
+        when(members.findAllByGivenNameOrderByIdAsc("민수")).thenReturn(List.of(new Member("김", "민수", "미지정", "U-DEV-MINSU")));
         when(tasks.save(any(Task.class))).thenAnswer(call -> call.getArgument(0));
 
         ToolResult result = createTask.createTask("기한 확인", "unassigned:NONE", "2026-11-10", meeting);
@@ -237,7 +237,7 @@ class MeetingToolsTests {
     // 검증: 등록되지 않은 팀 조회는 같은 이름의 후보를 안내하고 자동 선택하지 않는다.
     @Test
     void unknownTeamReturnsNotFoundWithCandidates() {
-        when(members.findAllByNameOrderByIdAsc("지영")).thenReturn(List.of(new Member("지영", "백엔드팀", "U-JIYOUNG")));
+        when(members.findAllByGivenNameOrderByIdAsc("지영")).thenReturn(List.of(new Member("이", "지영", "백엔드팀", "U-JIYOUNG")));
         ToolResult result = findMember.findMember("지영", "없는팀", Meeting.create("없는팀 지영 담당", MeetingSource.API_TEXT));
         assertThat(result.errorCode()).isEqualTo("MEMBER_TEAM_NOT_FOUND");
         assertThat(result.data()).contains("백엔드팀");
@@ -246,8 +246,8 @@ class MeetingToolsTests {
     // 검증: 팀 앞뒤 공백은 제거하고 정확히 일치하는 팀원만 반환한다.
     @Test
     void trimsTeamWhitespaceAndReturnsOnlyExactTeamCandidate() {
-        when(members.findAllByNameOrderByIdAsc("지영")).thenReturn(List.of(
-                new Member("지영", "백엔드팀", "U-BACKEND"), new Member("지영", "디자인팀", "U-DESIGN")));
+        when(members.findAllByGivenNameOrderByIdAsc("지영")).thenReturn(List.of(
+                new Member("이", "지영", "백엔드팀", "U-BACKEND"), new Member("이", "지영", "디자인팀", "U-DESIGN")));
         ToolResult result = findMember.findMember(" 지영 ", " 백엔드팀 ", Meeting.create("백엔드팀 지영 담당", MeetingSource.API_TEXT));
         assertThat(result.success()).isTrue();
         assertThat(result.data()).contains("백엔드팀").doesNotContain("디자인팀");
@@ -280,7 +280,7 @@ class MeetingToolsTests {
     // 검증: 실제 존재해도 현재 회의에서 조회된 후보가 아닌 ID는 거절한다.
     @Test
     void rejectsExistingMemberNotReturnedByLookup() {
-        Member member = new Member("민수", "U-MINSU");
+        Member member = new Member("김", "민수", "미지정", "U-MINSU");
         ReflectionTestUtils.setField(member, "id", 2L);
         when(members.findById(2L)).thenReturn(Optional.of(member));
         assertThat(createTask.createTask("API 확인", "member:2", null, testMeeting).errorCode()).isEqualTo("INVALID_ASSIGNEE");
@@ -334,7 +334,7 @@ class MeetingToolsTests {
     // 검증: 실패한 findMember가 모델에 반환한 후보와 로그의 후보는 마스킹 대상이 없으면 일치한다.
     @Test
     void recordsFailureCandidatesReturnedToModel() throws Exception {
-        when(members.findAllByNameOrderByIdAsc("해찬")).thenReturn(List.of(new Member("해찬", "백엔드팀", "U-HAECHAN")));
+        when(members.findAllByGivenNameOrderByIdAsc("해찬")).thenReturn(List.of(new Member("전", "해찬", "백엔드팀", "U-HAECHAN")));
         ToolResult returned = findMember.findMember("해찬", "프론트엔드팀", Meeting.create("프론트엔드팀 해찬 담당", MeetingSource.API_TEXT));
         var captor = org.mockito.ArgumentCaptor.forClass(ToolCallLog.class);
         verify(logs).save(captor.capture());
@@ -353,7 +353,7 @@ class MeetingToolsTests {
     // 검증: 팀 문자열의 대소문자·내부 공백·접미사 차이는 회의록과 등록 팀에 동일하게 적용한다.
     @Test
     void normalizesTeamCaseWhitespaceAndSuffix() {
-        when(members.findAllByNameOrderByIdAsc("지영")).thenReturn(List.of(new Member("지영", "BACKEND팀", "U-BACKEND")));
+        when(members.findAllByGivenNameOrderByIdAsc("지영")).thenReturn(List.of(new Member("이", "지영", "BACKEND팀", "U-BACKEND")));
         Meeting meeting = Meeting.create("backend 지영은 API 수정", MeetingSource.API_TEXT);
         assertThat(findMember.findMember("지영", " B A C K E N D 팀 ", meeting).success()).isTrue();
     }
@@ -401,9 +401,9 @@ class MeetingToolsTests {
     // 검증: 정규화 후 같은 팀은 후보 인원 수와 무관하게 한 팀으로 계산한다.
     @Test
     void ambiguousCountsDistinctNormalizedTeamsRatherThanMembers() {
-        when(members.findAllByNameOrderByIdAsc("지영")).thenReturn(List.of(
-                new Member("지영", "BACKEND팀", "U-1"), new Member("지영", "back end", "U-2"),
-                new Member("지영", "디자인팀", "U-3")));
+        when(members.findAllByGivenNameOrderByIdAsc("지영")).thenReturn(List.of(
+                new Member("이", "지영", "BACKEND팀", "U-1"), new Member("이", "지영", "back end", "U-2"),
+                new Member("이", "지영", "디자인팀", "U-3")));
         ToolResult result = findMember.findMember("지영", Meeting.create("backend 지영은 작업한다.", MeetingSource.API_TEXT));
         assertThat(result.message()).isEqualTo("AMBIGUOUS: 회의록에 BACKEND팀이 언급되어 있습니다. team=BACKEND팀으로 재조회하세요.");
         assertThat(result.data()).contains("U-1", "U-2", "U-3");
@@ -412,15 +412,15 @@ class MeetingToolsTests {
     // 검증: 팀까지 지정했는데 동명이인이 남으면 반복 재조회 대신 기존 확정 불가 안내를 유지한다.
     @Test
     void explicitTeamStillAmbiguousKeepsSameTeamWarning() {
-        when(members.findAllByNameOrderByIdAsc("지영")).thenReturn(List.of(
-                new Member("지영", "백엔드팀", "U-1"), new Member("지영", "백엔드팀", "U-2")));
+        when(members.findAllByGivenNameOrderByIdAsc("지영")).thenReturn(List.of(
+                new Member("이", "지영", "백엔드팀", "U-1"), new Member("이", "지영", "백엔드팀", "U-2")));
         ToolResult result = findMember.findMember("지영", "백엔드팀", Meeting.create("백엔드팀 지영 담당", MeetingSource.API_TEXT));
         assertThat(result.message()).contains("같은 팀에서도 여러 명이면 확정하지 마세요");
     }
 
     private void stubAmbiguousJiyoung() {
-        when(members.findAllByNameOrderByIdAsc("지영")).thenReturn(List.of(
-                new Member("지영", "백엔드팀", "U-BACKEND"), new Member("지영", "디자인팀", "U-DESIGN")));
+        when(members.findAllByGivenNameOrderByIdAsc("지영")).thenReturn(List.of(
+                new Member("이", "지영", "백엔드팀", "U-BACKEND"), new Member("이", "지영", "디자인팀", "U-DESIGN")));
     }
 
     // 검증: 도구 인자·결과에 섞인 Slack/Discord 웹훅 자격 증명도 기록 전에 마스킹한다.

@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.meetodo.meeting.Meeting;
 import com.meetodo.member.Member;
+import com.meetodo.member.MemberNames;
 import com.meetodo.task.UnresolvedAssignee;
 import com.meetodo.meeting.ToolCallLog;
 import com.meetodo.meeting.ToolCallLogRepository;
@@ -56,7 +57,7 @@ public class ToolExecutionService {
                 JsonNode arguments = mapper.readTree(log.getArguments());
                 String name = arguments.path("name").asText("").trim();
                 String team = TeamNames.normalize(arguments.path("team").asText(""));
-                if (name.equals(member.getName()) && !team.isEmpty() && !team.equals(TeamNames.normalize(member.getTeam()))) return true;
+                if (MemberNames.matches(member, name) && !team.isEmpty() && !team.equals(TeamNames.normalize(member.getTeam()))) return true;
             } catch (JsonProcessingException ignored) { /* Results never authorize an ID by themselves. */ }
         }
         return false;

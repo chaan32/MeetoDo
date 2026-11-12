@@ -12,7 +12,7 @@ public record CreateTaskRequest(
         @NotBlank @Size(max = 200) String title,
         @Schema(description = "담당자 ID. 지정 시 이름보다 우선합니다.", example = "1")
         Long assigneeId,
-        @Schema(description = "담당자 이름. 동명이인이면 400 AMBIGUOUS_MEMBER를 반환합니다.", example = "지영")
+        @Schema(description = "담당자 성명 또는 이름. 성명 정확 일치 우선, 없으면 이름 조회 후 끝의 님·씨 한 개를 제거해 재조회합니다. 동명이인이면 400 AMBIGUOUS_MEMBER를 반환합니다.", example = "이지영")
         @Size(max = 80) String assigneeName,
         @Schema(description = "마감일 (yyyy-MM-dd)", example = "2026-11-21")
         LocalDate dueDate) {

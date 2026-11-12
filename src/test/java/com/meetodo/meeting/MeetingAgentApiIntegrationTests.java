@@ -77,7 +77,7 @@ class MeetingAgentApiIntegrationTests {
         tasks.deleteAll();
         meetings.deleteAll();
         members.deleteAll();
-        members.save(new Member("민수", "U-DEV-MINSU"));
+        members.save(new Member("김", "민수", "미지정", "U-DEV-MINSU"));
     }
 
     // 검증: sendsToolResultsBackThroughSpringAiAndPersistsTheCompletedWorkflow 시나리오의 기대 동작을 확인한다.
@@ -97,7 +97,7 @@ class MeetingAgentApiIntegrationTests {
                 .andExpect(jsonPath("$.status").value("DONE"))
                 .andExpect(jsonPath("$.summary").value("로그인 API 수정 작업을 등록했습니다."))
                 .andExpect(jsonPath("$.tasks[0].title").value("로그인 API 수정"))
-                .andExpect(jsonPath("$.tasks[0].assigneeName").value("민수"))
+                .andExpect(jsonPath("$.tasks[0].assigneeName").value("김민수"))
                 .andExpect(jsonPath("$.tasks[0].assigneeTeam").value("미지정"))
                 .andExpect(jsonPath("$.tasks[0].dueDate").value("2026-11-20"))
                 .andExpect(jsonPath("$.tasks[0].resultType").value("CREATED"))
@@ -120,7 +120,7 @@ class MeetingAgentApiIntegrationTests {
     // 검증: 회의 API 결과에도 다른 회의에서 재사용한 기존 TODO를 EXISTING으로 포함한다.
     @Test
     void returnsCrossMeetingTodoAsExistingWithoutCreatingAnotherTask() throws Exception {
-        Member minsu = members.findAllByNameOrderByIdAsc("민수").getFirst();
+        Member minsu = members.findAllByGivenNameOrderByIdAsc("민수").getFirst();
         Meeting priorMeeting = Meeting.create("이전 회의", MeetingSource.API_TEXT);
         priorMeeting.startProcessing(java.time.Instant.parse("2026-11-11T00:00:00Z"));
         priorMeeting.complete("이전 회의 처리 완료", java.time.Instant.parse("2026-11-11T00:01:00Z"), 1, 1, 0);
@@ -145,9 +145,9 @@ class MeetingAgentApiIntegrationTests {
     // 검증: 모든 작업이 한 이전 회의의 TODO와 같아도 새 Meeting·로그를 보존하고 EXISTING Task를 반환한다.
     @Test
     void savesDuplicateMeetingAndReturnsEveryExistingTaskWhenAllTasksMatchOnePreviousMeeting() throws Exception {
-        Member minsu = members.findAllByNameOrderByIdAsc("민수").getFirst();
-        Member jiyoung = members.save(new Member("지영", "U-DEV-JIYOUNG"));
-        Member haechan = members.save(new Member("해찬", "U-DEV-HAECHAN"));
+        Member minsu = members.findAllByGivenNameOrderByIdAsc("민수").getFirst();
+        Member jiyoung = members.save(new Member("이", "지영", "미지정", "U-DEV-JIYOUNG"));
+        Member haechan = members.save(new Member("전", "해찬", "미지정", "U-DEV-HAECHAN"));
         Meeting original = Meeting.create("원본 회의록", MeetingSource.API_TEXT);
         original.startProcessing(java.time.Instant.parse("2026-11-11T00:00:00Z"));
         original.complete("세 작업을 논의했습니다.", java.time.Instant.parse("2026-11-11T00:01:00Z"), 4, 9, 0);
@@ -194,7 +194,7 @@ class MeetingAgentApiIntegrationTests {
     // 검증: 도구 로그를 파싱할 수 없어도 저장된 TaskMention으로 EXISTING Task를 응답한다.
     @Test
     void includesExistingTaskFromMentionRecordWhenToolResultCannotBeParsed() throws Exception {
-        Member minsu = members.findAllByNameOrderByIdAsc("민수").getFirst();
+        Member minsu = members.findAllByGivenNameOrderByIdAsc("민수").getFirst();
         Meeting source = Meeting.create("원본 회의", MeetingSource.API_TEXT);
         source.startProcessing(java.time.Instant.parse("2026-11-11T00:00:00Z"));
         source.complete("원본 처리", java.time.Instant.parse("2026-11-11T00:01:00Z"), 1, 1, 0);
@@ -238,7 +238,7 @@ class MeetingAgentApiIntegrationTests {
     // 검증: 기존 Task가 다른 회의에서 재언급되면 mentionCount가 2가 된다.
     @Test
     void incrementsMentionCountWhenExistingTaskIsMentionedInAnotherNonDuplicateMeeting() throws Exception {
-        Member minsu = members.findAllByNameOrderByIdAsc("민수").getFirst();
+        Member minsu = members.findAllByGivenNameOrderByIdAsc("민수").getFirst();
         Meeting source = Meeting.create("원본 회의", MeetingSource.API_TEXT);
         source.startProcessing(java.time.Instant.parse("2026-11-11T00:00:00Z"));
         source.complete("두 작업", java.time.Instant.parse("2026-11-11T00:01:00Z"), 1, 1, 0);
@@ -272,7 +272,7 @@ class MeetingAgentApiIntegrationTests {
     // 검증: 서로 다른 원본 회의의 작업이 함께 재사용되면 중복 회의로 표시하지 않고 둘 다 센다.
     @Test
     void doesNotMarkMeetingDuplicateWhenReusedTasksComeFromDifferentMeetings() throws Exception {
-        Member minsu = members.findAllByNameOrderByIdAsc("민수").getFirst();
+        Member minsu = members.findAllByGivenNameOrderByIdAsc("민수").getFirst();
         Meeting first = completedMeeting("원본 A");
         Meeting second = completedMeeting("원본 B");
         Task taskA = tasks.saveAndFlush(Task.create("로그인 오류 수정", minsu, null, first));
@@ -297,8 +297,8 @@ class MeetingAgentApiIntegrationTests {
     // 검증: 모의 모델이 백엔드팀 지영의 findMember 후보 ID를 고르면 해당 팀원에게 등록된다.
     @Test
     void assignsDuplicateNameToTheTeamSelectedByMockLlm() throws Exception {
-        Member backend = members.save(new Member("지영", "백엔드팀", "U-BACKEND-JIYOUNG"));
-        members.save(new Member("지영", "디자인팀", "U-DESIGN-JIYOUNG"));
+        Member backend = members.save(new Member("이", "지영", "백엔드팀", "U-BACKEND-JIYOUNG"));
+        members.save(new Member("이", "지영", "디자인팀", "U-DESIGN-JIYOUNG"));
         ChatResponse[] responses = new ChatResponse[]{
                 toolResponse("findMember", "{\"name\":\"지영\",\"team\":\"백엔드팀\"}"),
                 toolResponse("findTasks", "{\"assigneeId\":" + backend.getId() + ",\"assigneeName\":\"지영\",\"title\":\"API 오류 수정\"}"),
@@ -310,15 +310,15 @@ class MeetingAgentApiIntegrationTests {
         mvc.perform(post("/api/meetings").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"rawText\":\"백엔드팀 지영은 API 오류를 수정한다.\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.tasks[0].assigneeName").value("지영"))
+                .andExpect(jsonPath("$.tasks[0].assigneeName").value("이지영"))
                 .andExpect(jsonPath("$.tasks[0].assigneeTeam").value("백엔드팀"));
     }
 
     // 검증: 모호한 담당자를 모델이 미정으로 선택하면 경고와 미정 건수가 응답에 포함된다.
     @Test
     void leavesAmbiguousMemberUnassignedAndReturnsWarning() throws Exception {
-        members.save(new Member("지영", "백엔드팀", "U-BACKEND-JIYOUNG"));
-        members.save(new Member("지영", "디자인팀", "U-DESIGN-JIYOUNG"));
+        members.save(new Member("이", "지영", "백엔드팀", "U-BACKEND-JIYOUNG"));
+        members.save(new Member("이", "지영", "디자인팀", "U-DESIGN-JIYOUNG"));
         ChatResponse[] responses = new ChatResponse[]{
                 toolResponse("findMember", "{\"name\":\"지영\"}"),
                 toolResponse("findTasks", "{\"assigneeId\":null,\"assigneeName\":\"\",\"title\":\"회의실 예약\"}"),
@@ -337,8 +337,8 @@ class MeetingAgentApiIntegrationTests {
     // 검증: findMember 후보가 아닌 다른 팀원의 ID로 등록하려 하면 도구가 거절하고 Task를 저장하지 않는다.
     @Test
     void rejectsMemberIdOutsideTheNamedCandidateList() throws Exception {
-        Member backend = members.save(new Member("지영", "백엔드팀", "U-BACKEND-JIYOUNG"));
-        Member other = members.save(new Member("민수", "백엔드팀", "U-MINSU-OTHER"));
+        Member backend = members.save(new Member("이", "지영", "백엔드팀", "U-BACKEND-JIYOUNG"));
+        Member other = members.save(new Member("김", "민수", "백엔드팀", "U-MINSU-OTHER"));
         ChatResponse[] responses = new ChatResponse[]{
                 toolResponse("createTask", "{\"title\":\"API 확인\",\"assigneeId\":" + other.getId()
                         + ",\"assigneeName\":\"지영\",\"dueDate\":\"\",\"unassignedBecauseAmbiguous\":false}"),
@@ -382,7 +382,7 @@ class MeetingAgentApiIntegrationTests {
     // 검증: 같은 Task와 Meeting의 동시 Mention 저장 경쟁도 유니크 제약으로 한 건만 남긴다.
     @Test
     void storesOneMentionWhenConcurrentCallsRaceForSameTaskAndMeeting() throws Exception {
-        Member minsu = members.findAllByNameOrderByIdAsc("민수").getFirst();
+        Member minsu = members.findAllByGivenNameOrderByIdAsc("민수").getFirst();
         Meeting meeting = meetings.saveAndFlush(Meeting.create("동시 언급", MeetingSource.API_TEXT));
         Task task = tasks.saveAndFlush(Task.create("설계 검토", minsu, null, meeting));
         java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
@@ -399,8 +399,8 @@ class MeetingAgentApiIntegrationTests {
     // 검증: 실제 로그의 모순 인자와 빈 ID 재시도는 미정 Task를 조용히 저장하지 않는다.
     @Test
     void rejectsActualContradictoryArgumentsWithoutSilentlySavingUnassignedTask() throws Exception {
-        Member backend = members.save(new Member("지영", "백엔드팀", "U-BACKEND"));
-        members.save(new Member("지영", "디자인팀", "U-DESIGN"));
+        Member backend = members.save(new Member("이", "지영", "백엔드팀", "U-BACKEND"));
+        members.save(new Member("이", "지영", "디자인팀", "U-DESIGN"));
         ChatResponse[] responses = new ChatResponse[]{
                 rawToolResponse("findMember", "{\"name\":\"지영\"}"),
                 rawToolResponse("createTask", "{\"title\":\"로그인 API 오류 처리\",\"assigneeId\":" + backend.getId()
@@ -517,7 +517,7 @@ class MeetingAgentApiIntegrationTests {
     // 검증: 실제 호출 순서인 팀 불일치→빈 팀 조회→member ID 배정으로 오배정하지 않는다.
     @Test
     void replaysTeamMismatchThenEmptyTeamThenMemberWithoutAssigning() throws Exception {
-        Member haechan = members.save(new Member("해찬", "백엔드팀", "U-HAECHAN"));
+        Member haechan = members.save(new Member("전", "해찬", "백엔드팀", "U-HAECHAN"));
         ChatResponse[] responses = {
                 rawToolResponse("findMember", "{\"name\":\"해찬\",\"team\":\"프론트엔드팀\"}"),
                 rawToolResponse("findMember", "{\"name\":\"해찬\",\"team\":\"\"}"),
@@ -531,7 +531,7 @@ class MeetingAgentApiIntegrationTests {
     // 검증: team 필드를 생략한 재조회가 성공해도 앞선 불일치를 지우지 못하며 미정 경고로 복구한다.
     @Test
     void blocksAssignmentAfterTeamMismatchAndRegistersWithWarning() throws Exception {
-        Member haechan = members.save(new Member("해찬", "백엔드팀", "U-HAECHAN"));
+        Member haechan = members.save(new Member("전", "해찬", "백엔드팀", "U-HAECHAN"));
         ChatResponse[] responses = {
                 rawToolResponse("findMember", "{\"name\":\"해찬\",\"team\":\"프론트엔드팀\"}"),
                 rawToolResponse("findMember", "{\"name\":\"해찬\"}"),
@@ -557,7 +557,7 @@ class MeetingAgentApiIntegrationTests {
     // 검증: 팀 불일치 뒤 findTasks를 통한 기존 담당 작업 재사용도 막아 오배정 우회를 차단한다.
     @Test
     void blocksExistingAssignedTaskLookupAfterTeamMismatch() throws Exception {
-        Member haechan = members.save(new Member("해찬", "백엔드팀", "U-HAECHAN"));
+        Member haechan = members.save(new Member("전", "해찬", "백엔드팀", "U-HAECHAN"));
         tasks.saveAndFlush(Task.create("API 수정", haechan, null, completedMeeting("기존 작업")));
         ChatResponse[] responses = {
                 rawToolResponse("findMember", "{\"name\":\"해찬\",\"team\":\"프론트엔드팀\"}"),
@@ -577,7 +577,7 @@ class MeetingAgentApiIntegrationTests {
     // 검증: 다른 회의의 팀 불일치 이력은 현재 회의의 정상 배정을 제한하지 않는다.
     @Test
     void teamMismatchGuardIsScopedToCurrentMeeting() throws Exception {
-        Member haechan = members.save(new Member("해찬", "백엔드팀", "U-HAECHAN"));
+        Member haechan = members.save(new Member("전", "해찬", "백엔드팀", "U-HAECHAN"));
         ChatResponse[] first = {rawToolResponse("findMember", "{\"name\":\"해찬\",\"team\":\"프론트엔드팀\"}"), textResponse("확인 필요")};
         when(model.call(any(org.springframework.ai.chat.prompt.Prompt.class))).thenReturn(first[0], first[1]);
         submitStageA("프론트엔드팀 해찬 담당 확인");
@@ -585,20 +585,20 @@ class MeetingAgentApiIntegrationTests {
                 rawCreate("member:" + haechan.getId()), textResponse("배정 완료")};
         when(model.call(any(org.springframework.ai.chat.prompt.Prompt.class))).thenReturn(second[0], java.util.Arrays.copyOfRange(second, 1, second.length));
         submitStageA("해찬은 API 수정 담당")
-                .andExpect(jsonPath("$.tasks[0].assigneeName").value("해찬"))
+                .andExpect(jsonPath("$.tasks[0].assigneeName").value("전해찬"))
                 .andExpect(jsonPath("$.tasks[0].assigneeTeam").value("백엔드팀"));
     }
 
     // 검증: 이름만 명시된 유일한 해찬은 팀 조건 없이 정상 배정된다.
     @Test
     void assignsUniqueHaechanWhenTeamIsOmitted() throws Exception {
-        Member haechan = members.save(new Member("해찬", "백엔드팀", "U-HAECHAN"));
+        Member haechan = members.save(new Member("전", "해찬", "백엔드팀", "U-HAECHAN"));
         ChatResponse[] responses = {rawToolResponse("findMember", "{\"name\":\"해찬\"}"),
                 rawToolResponse("findTasks", "{\"assigneeId\":" + haechan.getId() + ",\"assigneeName\":\"해찬\",\"title\":\"API 수정\"}"),
                 rawCreate("member:" + haechan.getId()), textResponse("배정 완료")};
         when(model.call(any(org.springframework.ai.chat.prompt.Prompt.class))).thenReturn(responses[0], java.util.Arrays.copyOfRange(responses, 1, responses.length));
         submitStageA("해찬은 API 수정 담당")
-                .andExpect(jsonPath("$.tasks[0].assigneeName").value("해찬"))
+                .andExpect(jsonPath("$.tasks[0].assigneeName").value("전해찬"))
                 .andExpect(jsonPath("$.validationFailureCount").value(0));
         ToolCallLog lookup = logs.findAll().stream().filter(l -> l.getToolName().equals("findMember")).findFirst().orElseThrow();
         assertThat(new ObjectMapper().readTree(lookup.getArguments()).has("team")).isFalse();
@@ -607,7 +607,7 @@ class MeetingAgentApiIntegrationTests {
     // 검증: 등록된 팀과 일치하는 백엔드팀 해찬은 정상 배정된다.
     @Test
     void assignsHaechanWhenExplicitTeamMatches() throws Exception {
-        Member haechan = members.save(new Member("해찬", "백엔드팀", "U-HAECHAN"));
+        Member haechan = members.save(new Member("전", "해찬", "백엔드팀", "U-HAECHAN"));
         ChatResponse[] responses = {rawToolResponse("findMember", "{\"name\":\"해찬\",\"team\":\"백엔드팀\"}"),
                 rawToolResponse("findTasks", "{\"assigneeId\":" + haechan.getId() + ",\"assigneeName\":\"해찬\",\"title\":\"API 수정\"}"),
                 rawCreate("member:" + haechan.getId()), textResponse("배정 완료")};
@@ -642,7 +642,7 @@ class MeetingAgentApiIntegrationTests {
     // 검증: 동명이인이 아닌 첫 조회라도 회의록에 없는 팀은 거절한다.
     @Test
     void rejectsInventedTeamOnFirstLookupForUniqueMember() throws Exception {
-        Member haechan = members.save(new Member("해찬", "백엔드팀", "U-HAECHAN"));
+        Member haechan = members.save(new Member("전", "해찬", "백엔드팀", "U-HAECHAN"));
         ChatResponse[] responses = {rawToolResponse("findMember", "{\"name\":\"해찬\",\"team\":\"백엔드팀\"}"),
                 rawCreate("member:" + haechan.getId()), textResponse("확인 필요")};
         when(model.call(any(org.springframework.ai.chat.prompt.Prompt.class))).thenReturn(responses[0], java.util.Arrays.copyOfRange(responses, 1, responses.length));
@@ -667,8 +667,8 @@ class MeetingAgentApiIntegrationTests {
     // 알려진 한계: 업무 내용의 '디자인'도 디자인팀 언급으로 간주해 소속 근거 없이 배정할 수 있다.
     @Test
     void knownLimitationDesignWorkWordAllowsDesignTeamLookupAndAssignment() throws Exception {
-        members.save(new Member("지영", "백엔드팀", "U-BACKEND"));
-        Member design = members.save(new Member("지영", "디자인팀", "U-DESIGN"));
+        members.save(new Member("이", "지영", "백엔드팀", "U-BACKEND"));
+        Member design = members.save(new Member("이", "지영", "디자인팀", "U-DESIGN"));
         ChatResponse[] responses = {rawToolResponse("findMember", "{\"name\":\"지영\",\"team\":\"디자인팀\"}"),
                 rawToolResponse("findTasks", "{\"assigneeId\":" + design.getId() + ",\"assigneeName\":\"지영\",\"title\":\"API 수정\"}"),
                 rawCreate("member:" + design.getId()), textResponse("배정 결과")};
@@ -679,8 +679,8 @@ class MeetingAgentApiIntegrationTests {
     }
 
     private Member seedJiyoung() {
-        Member backend = members.save(new Member("지영", "백엔드팀", "U-BACKEND"));
-        members.save(new Member("지영", "디자인팀", "U-DESIGN"));
+        Member backend = members.save(new Member("이", "지영", "백엔드팀", "U-BACKEND"));
+        members.save(new Member("이", "지영", "디자인팀", "U-DESIGN"));
         return backend;
     }
 
@@ -732,6 +732,41 @@ class MeetingAgentApiIntegrationTests {
         when(model.call(any(org.springframework.ai.chat.prompt.Prompt.class))).thenReturn(responses[0], java.util.Arrays.copyOfRange(responses, 1, responses.length));
         submitStageA("준호는 문서를 준비하고 수진은 리뷰한다.")
                 .andExpect(jsonPath("$.tasks[0].unresolvedAssignee.requestedAssigneeName").value("준호"));
+    }
+
+    // 모델이 직급을 제외한 이름을 추출하면 서버는 이름·팀을 매칭하고 전체 이름으로 응답한다.
+    @Test
+    void modelExtractsGivenNameFromRoleAndServerDisplaysFullName() throws Exception {
+        Member backend = seedJiyoung();
+        ChatResponse[] responses = {
+                rawToolResponse("findMember", "{\"name\":\"지영\",\"team\":\"백엔드팀\"}"),
+                rawToolResponse("findTasks", "{\"assigneeId\":" + backend.getId() + ",\"assigneeName\":\"지영\",\"title\":\"E검증 API 수정\"}"),
+                rawToolResponse("createTask", "{\"title\":\"E검증 API 수정\",\"assignee\":\"member:" + backend.getId() + "\",\"dueDate\":\"\"}"),
+                textResponse("완료")};
+        when(model.call(any(org.springframework.ai.chat.prompt.Prompt.class))).thenReturn(responses[0], java.util.Arrays.copyOfRange(responses, 1, responses.length));
+        submitStageA("백엔드팀 지영 대리는 E검증 API를 수정한다.")
+                .andExpect(jsonPath("$.tasks[0].assigneeName").value("이지영"))
+                .andExpect(jsonPath("$.tasks[0].assigneeTeam").value("백엔드팀"))
+                .andExpect(jsonPath("$.validationFailureCount").value(0));
+        var prompts = org.mockito.ArgumentCaptor.forClass(org.springframework.ai.chat.prompt.Prompt.class);
+        org.mockito.Mockito.verify(model, org.mockito.Mockito.times(4)).call(prompts.capture());
+        assertThat(prompts.getAllValues().getFirst().getInstructions().getFirst().getText())
+                .contains("회의록에 있는 이름만", "서버는 님·씨", "지영 대리는", "민수 팀장님이");
+    }
+
+    // 모델이 호칭을 남겨 보내도 서버의 제한된 보조 처리와 D 조회 참조가 함께 동작한다.
+    @Test
+    void modelHonorificLookupKeepsOriginalRequestedNameWithFullNamedCandidates() throws Exception {
+        seedJiyoung();
+        ChatResponse[] responses = {
+                rawToolResponse("findMember", "{\"name\":\"지영님\"}"),
+                rawToolResponse("createTask", "{\"title\":\"E검증 예약 확인\",\"assignee\":\"unassigned:AMBIGUOUS\",\"dueDate\":\"\",\"lookupCallOrder\":1}"),
+                textResponse("완료")};
+        when(model.call(any(org.springframework.ai.chat.prompt.Prompt.class))).thenReturn(responses[0], java.util.Arrays.copyOfRange(responses, 1, responses.length));
+        submitStageA("지영님은 E검증 예약을 확인한다.")
+                .andExpect(jsonPath("$.tasks[0].unresolvedAssignee.requestedAssigneeName").value("지영님"))
+                .andExpect(jsonPath("$.tasks[0].unresolvedAssignee.candidates[0].name").value("이지영"))
+                .andExpect(jsonPath("$.validationFailureCount").value(0));
     }
 
     private ChatResponse rawCreate(String assignee) throws Exception {
@@ -792,7 +827,7 @@ class MeetingAgentApiIntegrationTests {
                 else if (object.path("assigneeId").canConvertToLong()) token = "member:" + object.path("assigneeId").asLong();
                 else if (memberName.isBlank()) token = "unassigned:NONE";
                 else {
-                    var candidates = members.findAllByNameOrderByIdAsc(memberName);
+                    var candidates = members.findAllByGivenNameOrderByIdAsc(memberName);
                     if (candidates.isEmpty()) token = "unassigned:NOT_FOUND";
                     else {
                         Member member = candidates.getFirst();

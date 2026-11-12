@@ -81,10 +81,10 @@ class UnresolvedAssigneeToolTests {
     // 검증: 팀 불일치는 회의록의 요청 팀과 실제 등록 팀을 함께 보존한다.
     @Test
     void storesTeamMismatchLookupSnapshot() {
-        when(members.findAllByNameOrderByIdAsc("해찬")).thenReturn(List.of(member(2L, "해찬", "백엔드팀")));
+        when(members.findAllByGivenNameOrderByIdAsc("해찬")).thenReturn(List.of(member(2L, "해찬", "백엔드팀")));
         var lookup = find.findMember("해찬", "프론트엔드팀", meeting);
         assertThat(create.createTask("확인", "unassigned:TEAM_MISMATCH", null, lookup.lookupCallOrder(), meeting).success()).isTrue();
-        assertThat(saved().getUnresolvedAssignee().warning()).isEqualTo("팀 불일치 확인 필요: \"프론트엔드팀 해찬\" (등록: 백엔드팀 해찬)");
+        assertThat(saved().getUnresolvedAssignee().warning()).isEqualTo("팀 불일치 확인 필요: \"프론트엔드팀 해찬\" (등록: 백엔드팀 전해찬)");
     }
 
     // 검증: 참조 없는 미정 사유는 생성하지 않고 복구할 인자를 안내한다.
@@ -209,7 +209,7 @@ class UnresolvedAssigneeToolTests {
     void boundsCandidatesFromRealLookup() {
         var candidates = new ArrayList<Member>();
         for (int i = 1; i <= 21; i++) candidates.add(member((long)i, "지영", "팀" + i));
-        when(members.findAllByNameOrderByIdAsc("지영")).thenReturn(candidates);
+        when(members.findAllByGivenNameOrderByIdAsc("지영")).thenReturn(candidates);
         var lookup = find.findMember("지영", meeting);
         assertThat(create.createTask("확인", "unassigned:AMBIGUOUS", null, lookup.lookupCallOrder(), meeting).success()).isTrue();
         var snapshot = saved().getUnresolvedAssignee();
@@ -228,9 +228,9 @@ class UnresolvedAssigneeToolTests {
         assertThat(mapper.readTree(stored.getFirst().getResult())).isEqualTo(mapper.valueToTree(result));
     }
 
-    private void ambiguous() { when(members.findAllByNameOrderByIdAsc("지영")).thenReturn(List.of(member(2L,"지영","백엔드팀"), member(3L,"지영","디자인팀"))); }
+    private void ambiguous() { when(members.findAllByGivenNameOrderByIdAsc("지영")).thenReturn(List.of(member(2L,"지영","백엔드팀"), member(3L,"지영","디자인팀"))); }
     private Task saved() { var captor = org.mockito.ArgumentCaptor.forClass(Task.class); verify(tasks).save(captor.capture()); return captor.getValue(); }
     private void assertInvalid(ToolResult result) { assertThat(result.errorCode()).isEqualTo("INVALID_LOOKUP_REFERENCE"); assertThat(result.message()).isEqualTo("findMember 결과에 있는 lookupCallOrder 값을 그대로 넣으세요"); verify(tasks, never()).save(any()); }
     private static Meeting meeting(Long id, String text) { var result = Meeting.create(text, MeetingSource.API_TEXT); ReflectionTestUtils.setField(result,"id",id); return result; }
-    private static Member member(Long id, String name, String team) { var result = new Member(name,team,"U-"+id); ReflectionTestUtils.setField(result,"id",id); return result; }
+    private static Member member(Long id, String name, String team) { var result = new Member(com.meetodo.MemberFixtures.familyNameForSampleGivenName(name), name, team, "U-"+id); ReflectionTestUtils.setField(result,"id",id); return result; }
 }

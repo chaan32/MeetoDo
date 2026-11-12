@@ -51,7 +51,7 @@ class TaskServiceTests {
     // 검증: rejectsUnknownAssignee 시나리오의 기대 동작을 확인한다.
     @Test
     void rejectsUnknownAssignee() {
-        when(memberRepository.findAllByNameOrderByIdAsc("없는 사람")).thenReturn(List.of());
+        when(memberRepository.findAllByGivenNameOrderByIdAsc("없는 사람")).thenReturn(List.of());
 
         assertThatThrownBy(() -> taskService.create(
                 new CreateTaskRequest("작업", "없는 사람", null)))
@@ -61,15 +61,15 @@ class TaskServiceTests {
     // 검증: filtersTasksByAssigneeName 시나리오의 기대 동작을 확인한다.
     @Test
     void filtersTasksByAssigneeName() {
-        Member member = new Member("민수", "U-MINSU");
+        Member member = new Member("김", "민수", "미지정", "U-MINSU");
         Task task = Task.create("설계서 작성", member, null);
-        when(memberRepository.findAllByNameOrderByIdAsc("민수")).thenReturn(List.of(member));
+        when(memberRepository.findAllByGivenNameOrderByIdAsc("민수")).thenReturn(List.of(member));
         when(taskRepository.findAllByAssigneeOrderByCreatedAtDesc(member)).thenReturn(java.util.List.of(task));
 
         var result = taskService.findAll("민수");
 
         assertThat(result).hasSize(1);
-        assertThat(result.getFirst().assignee().name()).isEqualTo("민수");
+        assertThat(result.getFirst().assignee().name()).isEqualTo("김민수");
     }
 
     // 검증: changesTaskStatus 시나리오의 기대 동작을 확인한다.
@@ -88,7 +88,7 @@ class TaskServiceTests {
     // 검증: reusesSameAssigneeAndTitleAcrossMeetings 시나리오의 기대 동작을 확인한다.
     @Test
     void reusesSameAssigneeAndTitleAcrossMeetings() {
-        Member assignee = new Member("민수", "U-MINSU");
+        Member assignee = new Member("김", "민수", "미지정", "U-MINSU");
         Meeting firstMeeting = meetingWithId(10L);
         Meeting secondMeeting = meetingWithId(11L);
         Task existing = Task.create("설계서  작성", assignee, null, firstMeeting).withId(1L, Instant.EPOCH);
@@ -124,7 +124,7 @@ class TaskServiceTests {
     // 검증: createsNewTaskWhenMatchingTaskIsDone 시나리오의 기대 동작을 확인한다.
     @Test
     void createsNewTaskWhenMatchingTaskIsDone() {
-        Member assignee = new Member("민수", "U-MINSU");
+        Member assignee = new Member("김", "민수", "미지정", "U-MINSU");
         Meeting previousMeeting = meetingWithId(10L);
         Meeting meeting = meetingWithId(11L);
         Task done = Task.create("설계서 작성", assignee, null, previousMeeting).withId(3L, Instant.EPOCH);

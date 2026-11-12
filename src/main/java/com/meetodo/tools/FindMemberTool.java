@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.LinkedHashMap;
 
 import com.meetodo.member.Member;
+import com.meetodo.member.MemberNames;
 import com.meetodo.member.MemberRepository;
 import com.meetodo.meeting.Meeting;
 import org.springframework.ai.chat.model.ToolContext;
@@ -23,8 +24,8 @@ public class FindMemberTool {
         this.execution = execution;
     }
 
-    @Tool(name = "findMember", description = "팀원을 이름과 선택 팀으로 조회한다. 회의록에 팀 이름이 실제로 있으면 첫 호출부터 team을 함께 전달한다. 팀 접미사·대소문자·공백 차이는 허용하며 역할만으로 팀을 추측하지 않는다. 미정으로 등록할 때는 이 결과의 lookupCallOrder 값을 createTask에 그대로 전달한다.")
-    public ToolResult invokeFindMember(@ToolParam(description = "조회할 팀원의 이름") String name,
+    @Tool(name = "findMember", description = "팀원을 이름과 선택 팀으로 조회한다. name에는 호칭·직급·조사를 뺀 이름만 넣으세요. 예: '지영 대리는' → '지영', '민수 팀장님이' → '민수'. 회의록에 팀 이름이 실제로 있으면 첫 호출부터 team을 함께 전달한다. 팀 접미사·대소문자·공백 차이는 허용하며 역할만으로 팀을 추측하지 않는다. 미정으로 등록할 때는 이 결과의 lookupCallOrder 값을 createTask에 그대로 전달한다.")
+    public ToolResult invokeFindMember(@ToolParam(description = "name에는 호칭·직급·조사를 뺀 이름만 넣으세요. 예: '지영 대리는' → '지영', '민수 팀장님이' → '민수'.") String name,
                                        @ToolParam(description = "회의록에 명시된 팀. 없으면 필드 생략. 빈 문자열·공백은 오류", required = false) String team,
                                        ToolContext toolContext) {
         return findMember(name, team, execution.meetingFrom(toolContext));
@@ -48,7 +49,9 @@ public class FindMemberTool {
             if (team != null && !TeamNames.mentionedIn(team, meeting.getRawText()))
                 return ToolResult.error("TEAM_NOT_IN_TRANSCRIPT", "회의록에 언급되지 않은 팀으로 조회할 수 없습니다. 팀 언급이 없으면 담당자 미정으로 처리하세요.");
             String normalized = name.trim();
-            var candidates = members.findAllByNameOrderByIdAsc(normalized);
+            var candidates = MemberNames.find(members, normalized);
+            if (candidates.isEmpty() && MemberNames.withoutHonorific(normalized).isEmpty())
+                return ToolResult.error("INVALID_MEMBER_NAME", "팀원 이름을 입력해야 합니다.");
             if (candidates.isEmpty()) return ToolResult.error("MEMBER_NOT_FOUND", "등록된 팀원을 찾지 못했습니다.");
             if (team != null && !team.isBlank()) {
                 var matchingTeam = candidates.stream().filter(m -> TeamNames.normalize(m.getTeam()).equals(TeamNames.normalize(team))).toList();

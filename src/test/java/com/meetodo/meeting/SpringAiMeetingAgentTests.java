@@ -71,7 +71,7 @@ class SpringAiMeetingAgentTests {
                 new FindMemberTool(members, execution), new FindTasksTool(members, tasks, execution, mentions),
                 new CreateTaskTool(members, new TaskService(tasks, members, mentions), mentions, execution, clock),
                 clock, execution);
-        when(members.findAllByNameOrderByIdAsc("민수")).thenReturn(List.of(new Member("민수", "U-DEV-MINSU")));
+        when(members.findAllByGivenNameOrderByIdAsc("민수")).thenReturn(List.of(new Member("김", "민수", "미지정", "U-DEV-MINSU")));
     }
 
     // 검증: executesRequestedToolThenReturnsFinalAnswerAndMeasuresCalls 시나리오의 기대 동작을 확인한다.
@@ -94,7 +94,7 @@ class SpringAiMeetingAgentTests {
     @Test
     void acceptsUnknownExtraFieldsInSpringAiToolArguments() {
         Meeting meeting = meetingWithId("민수 업무", 79L);
-        when(members.findAllByNameOrderByIdAsc("민수")).thenReturn(List.of(new Member("민수", "백엔드팀", "U-MINSU")));
+        when(members.findAllByGivenNameOrderByIdAsc("민수")).thenReturn(List.of(new Member("김", "민수", "백엔드팀", "U-MINSU")));
         ChatResponse[] responses = new ChatResponse[]{
                 toolResponse("findMember", "{\"name\":\"민수\",\"futureField\":true}"),
                 textResponse("확인 완료")};
@@ -112,11 +112,11 @@ class SpringAiMeetingAgentTests {
     @Test
     void registersThreeTasksAndKeepsAnUnknownAssigneeUnassigned() {
         Meeting meeting = meetingWithId("세 작업 회의록", 76L);
-        Member minsu = new Member("민수", "U-MINSU");
-        Member jiyoung = new Member("지영", "U-JIYOUNG");
-        when(members.findAllByNameOrderByIdAsc("민수")).thenReturn(List.of(minsu));
-        when(members.findAllByNameOrderByIdAsc("지영")).thenReturn(List.of(jiyoung));
-        when(members.findAllByNameOrderByIdAsc("없는 사람")).thenReturn(List.of());
+        Member minsu = new Member("김", "민수", "미지정", "U-MINSU");
+        Member jiyoung = new Member("이", "지영", "미지정", "U-JIYOUNG");
+        when(members.findAllByGivenNameOrderByIdAsc("민수")).thenReturn(List.of(minsu));
+        when(members.findAllByGivenNameOrderByIdAsc("지영")).thenReturn(List.of(jiyoung));
+        when(members.findAllByGivenNameOrderByIdAsc("없는 사람")).thenReturn(List.of());
         when(tasks.findAllByMeeting_IdAndTitleIgnoreCase(any(), any())).thenReturn(List.of());
         when(tasks.findAllByAssigneeOrderByCreatedAtDesc(any())).thenReturn(List.of());
         when(tasks.findAllByAssigneeIsNullOrderByCreatedAtDesc()).thenReturn(List.of());
@@ -300,7 +300,7 @@ class SpringAiMeetingAgentTests {
                 else if (object.path("assigneeId").canConvertToLong()) token = "member:" + object.path("assigneeId").asLong();
                 else if (memberName.isBlank()) token = "unassigned:NONE";
                 else {
-                    var candidates = members.findAllByNameOrderByIdAsc(memberName);
+                    var candidates = members.findAllByGivenNameOrderByIdAsc(memberName);
                     if (candidates.isEmpty()) token = "unassigned:NOT_FOUND";
                     else {
                         Member member = candidates.getFirst();

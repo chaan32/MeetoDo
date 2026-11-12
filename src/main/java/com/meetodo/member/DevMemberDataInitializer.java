@@ -12,16 +12,16 @@ public class DevMemberDataInitializer {
     @Bean
     ApplicationRunner seedDevelopmentMembers(MemberRepository members) {
         return args -> {
-            addIfMissing(members, "민수", "백엔드팀", "U-DEV-MINSU");
-            addIfMissing(members, "지영", "백엔드팀", "U-DEV-JIYOUNG-BACKEND");
-            addIfMissing(members, "지영", "디자인팀", "U-DEV-JIYOUNG-DESIGN");
-            addIfMissing(members, "해찬", "백엔드팀", "U-DEV-HAECHAN");
+            addIfMissing(members, "김", "민수", "백엔드팀", "U-DEV-MINSU");
+            addIfMissing(members, "이", "지영", "백엔드팀", "U-DEV-JIYOUNG-BACKEND");
+            addIfMissing(members, "이", "지영", "디자인팀", "U-DEV-JIYOUNG-DESIGN");
+            addIfMissing(members, "전", "해찬", "백엔드팀", "U-DEV-HAECHAN");
         };
     }
 
-    private void addIfMissing(MemberRepository members, String name, String team, String slackUserId) {
+    private void addIfMissing(MemberRepository members, String familyName, String givenName, String team, String slackUserId) {
         if (!members.existsBySlackUserId(slackUserId)) {
-            members.save(new Member(name, team, slackUserId));
+            members.save(new Member(familyName, givenName, team, slackUserId));
         }
     }
 }
