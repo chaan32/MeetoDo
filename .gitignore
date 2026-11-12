@@ -14,3 +14,7 @@ data/
 
 # Keep the Gradle Wrapper jar in version control.
 !gradle/wrapper/gradle-wrapper.jar
+
+# README 외 마크다운 문서는 로컬에만 보관
+*.md
+!README.md
