@@ -11,24 +11,24 @@ public class DiscordPayloadRenderer {
         int budget = Math.min(4096, 6000 - title.length() - footer.length());
         int total = message.taskLines().size();
         String summary = truncate(escape(String.join("\n", message.summaryLines())),
-                budget - (total == 0 ? 0 : omission(message.meetingId(), total).length() + 2));
+                budget - (total == 0 ? 0 : message.omission(total).length() + 2));
         List<String> taskLines = message.taskLines().stream().map(this::escape).toList();
         List<String> included = new ArrayList<>();
         if (description(summary, taskLines, "").length() <= budget) {
             included.addAll(taskLines);
         } else {
-            // shortcut: 한 임베드에 들어가는 접두 목록만 전송한다. 전체 목록은 회의 조회 API로 확인한다.
+            // shortcut: 한 임베드에 들어가는 접두 목록만 전송한다. 전체 목록은 메시지 유형에 맞는 조회 API로 확인한다.
             for (String line : taskLines) {
                 List<String> candidate = new ArrayList<>(included);
                 candidate.add(line);
                 int remaining = total - candidate.size();
-                String omitted = remaining == 0 ? "" : omission(message.meetingId(), remaining);
+                String omitted = remaining == 0 ? "" : message.omission(remaining);
                 if (description(summary, candidate, omitted).length() > budget) break;
                 included.add(line);
             }
         }
         int remaining = total - included.size();
-        String omitted = remaining == 0 ? "" : omission(message.meetingId(), remaining);
+        String omitted = remaining == 0 ? "" : message.omission(remaining);
         Map<String, Object> embed = Map.of("title", title, "description", description(summary, included, omitted),
                 "footer", Map.of("text", footer));
         return Map.of("embeds", List.of(embed), "allowed_mentions", Map.of("parse", List.of()));
@@ -42,10 +42,6 @@ public class DiscordPayloadRenderer {
 
     private String escape(String text) {
         return text.replaceAll("([\\\\`*_~|>\\[\\]()#])", "\\\\$1");
-    }
-
-    private String omission(Long meetingId, int count) {
-        return "외 " + count + "건은 GET /api/meetings/" + meetingId + "에서 확인";
     }
 
     private String truncate(String text, int limit) {

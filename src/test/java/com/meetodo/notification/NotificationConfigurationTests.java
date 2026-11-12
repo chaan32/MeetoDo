@@ -39,10 +39,10 @@ class NotificationConfigurationTests {
         context.withPropertyValues("spring.profiles.active=local,openai", "NOTIFIER_TYPE=slack", "SLACK_WEBHOOK_URL=", "DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/fake")
                 .run(c -> assertThat(c).doesNotHaveBean(Notifier.class));
     }
-    // 검증: 기본 local 프로필에서도 openai가 없으면 URL이 있어도 전송 빈을 생성하지 않는다.
-    @Test void localOnlyProfileDoesNotLoadTransport() {
+    // 검증: LLM 없는 마감 알림을 위해 local만으로도 설정된 공급자를 생성한다(전송은 하지 않는다).
+    @Test void localOnlyProfileLoadsConfiguredTransportWithoutOpenai() {
         context.withPropertyValues("spring.profiles.active=local", "NOTIFIER_TYPE=discord", "DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/fake")
-                .run(c -> assertThat(c).doesNotHaveBean(Notifier.class));
+                .run(c -> assertThat(c.getBean(Notifier.class)).isInstanceOf(DiscordNotifier.class));
     }
     // 검증: 지원하지 않는 공급자 타입은 실제 전송 빈을 만들지 않는다.
     @Test void unsupportedTypeDoesNotLoadTransport() {

@@ -25,3 +25,9 @@ management:
   endpoint:
     health:
       show-details: never
+
+# Opt-in weekday digest; manual local endpoint is available independently.
+meetodo:
+  digest:
+    enabled: ${MEETODO_DIGEST_ENABLED:false}
+    cron: ${MEETODO_DIGEST_CRON:0 0 9 * * MON-FRI}

@@ -2,7 +2,7 @@
 
 회의록에서 할 일을 추출해 담당자·마감일과 함께 등록하고 Slack으로 알리는 백엔드 프로젝트입니다. 별도 프론트엔드 없이 Swagger로 입력하고 Slack으로 결과를 받는 서비스를 목표로 합니다.
 
-Task 등록·담당자별 조회·상태 변경과 도구 호출 기반 회의 처리 API를 구현했습니다. 실제 OpenAI 연결은 사용자가 확인했습니다. Slack 알림은 다음 단계입니다.
+Task API·회의 처리 에이전트·Slack/Discord 완료 알림·평일 마감 다이제스트를 구현했습니다. OpenAI 연결과 완료 알림의 실제 채널 표시는 사용자가 확인했습니다. 5단계 실제 채널 확인은 별도입니다.
 
 ## 실행
 
@@ -107,7 +107,7 @@ TaskMention은 기존 개발 데이터에 대해 백필하지 않습니다. 로�
 
 ## 다음 단계
 
-Slack Block Kit·Discord embed 알림을 구현했으며 실제 채널 확인 후 매일 아침 워크플로를 진행합니다. 회의 처리 시간·LLM 호출 횟수·도구별 시간·검증 실패 비율은 실제로 수집하고 개선 전 기준값을 먼저 확보합니다.
+Slack/Discord 완료 알림의 사용자 실제 확인과 평일 마감 워크플로 구현을 마쳤습니다. 마감 다이제스트의 실제 채널 확인 후 Docker Compose·PostgreSQL 단계로 진행합니다. 회의 처리 시간·LLM 호출 횟수·도구별 시간·검증 실패 비율은 실제로 수집하고 개선 전 기준값을 먼저 확보합니다.
 
 ## 버전 근거
 
@@ -174,9 +174,9 @@ A 적용 후 실측은 이번 회의록 팀 대조·표기 정규화·단일 후
 
 알림은 모델 도구가 아니라 서버의 완료 후속 처리다. Meeting DONE/FAILED 저장과 이벤트 발행을 짧은 트랜잭션으로 묶고, AFTER_COMMIT 동기 리스너가 단일 메시지를 전송한다. 알림 결과는 REQUIRES_NEW 트랜잭션으로 저장한다. 전송 실패가 Meeting DONE을 FAILED로 바꾸지 않는다. 기존 processingTimeMs는 회의 처리 시간이며, 알림 대기 시간은 포함하지 않는다. API 응답 시간에는 알림 대기가 더해질 수 있다.
 
-Notifier 인터페이스로 설계해서 두레이 같은 사내 메신저도 구현체 추가로 연결할 수 있다. 두레이는 이번에 구현하지 않았다. Slack 생성 장애로 Discord로 먼저 검증한다. 사용자는 Discord 웹훅 자체 연결을 확인했으며, 이 서비스의 실제 메시지 표시는 사용자 확인 단계다. 최종 데모는 Slack을 사용한다.
+Notifier 인터페이스로 설계해서 두레이 같은 사내 메신저도 구현체 추가로 연결할 수 있다. 두레이는 이번에 구현하지 않았다. Slack 생성 장애로 Discord를 먼저 검증했고, 이후 사용자가 설정만 바꿔 Slack에서도 실제 완료 알림과 상세 경고를 확인했다. 최종 데모는 Slack을 사용한다.
 
-- 실제 전송: local & openai & !test + NOTIFIER_TYPE(slack/discord) + 해당 URL 환경변수가 모두 있어야 한다. 기본 local만 실행하거나 test 프로필이면 실제 전송하지 않는다.
+- 실제 전송: local & !test + NOTIFIER_TYPE(slack/discord) + 해당 URL 환경변수가 있어야 한다. 5단계부터 OpenAI 없는 다이제스트를 위해 메신저 빈에서 openai 조건을 분리했다. URL/타입 미설정과 test 프로필에서는 실제 전송하지 않는다. OpenAI 빈 자체의 local & openai & !test 조건은 유지한다.
 - notificationStatus: PENDING / SENT / FAILED / SKIPPED. notificationType, notificationErrorCode, notifiedAt도 조회 응답에 제공한다. notifiedAt은 공급자 성공 응답 시각이며 사람이 읽었다는 뜻은 아니다.
 - URL이나 활성화 조건이 없으면 SKIPPED / NOT_CONFIGURED. 과거 데이터의 알림 상태가 null이면 SKIPPED / NOT_ATTEMPTED로 표시하며 과거 회의를 자동 전송하지 않는다.
 - 동일 본문 재전송은 기존 결과와 기존 알림 상태를 반환하며 추가 전송하지 않는다. 같은 Task 묶음인 새 Meeting은 원본 ID와 건수를 짧게 알린다. Meeting FAILED는 일반화된 짧은 실패 알림을 보낸다.
@@ -232,3 +232,25 @@ D의 `requestedAssigneeName`은 원래 findMember 조회 인자를 보존한다.
 measure.sh 원문은 바꾸지 않았다. 기존 “지영은 …”, “백엔드팀 지영은 …”는 미정/배정 판정을 유지하도록 자동 테스트하며, 전체 이름 표시로 모델에 전달되는 후보·결과 내용은 달라진다. 후속 실측은 DEVLOG의 **E 적용 후(성명 분리)** 빈 칸에 따로 기록하고 기존 D 수치와 섞지 않는다. B와 실제 멘션 기능은 계속 보류한다. 확인 절차는 [memberNameStepEDone.md](memberNameStepEDone.md)에 정리한다.
 
 E 전체 검증: `./gradlew test bootJar --no-daemon` 성공, **250개 테스트 / 실패·오류·건너뜀 0**. 자동 테스트는 로직·설정 검증이며 E의 실제 모델 입력 추출·Slack 표시·처리 시간은 사용자가 별도로 확인한다.
+
+
+## 평일 마감 알림 — 5단계
+
+LLM을 사용하지 않는다. TODO 상태와 날짜 구간을 정해진 규칙으로 분류하는 반복 작업이라 모델 판단이 필요 없으며 **이 워크플로의 LLM 호출·토큰 비용은 0**이다(서비스·인프라 비용 전체가 0이라는 뜻은 아니다). 기존 Notifier와 Slack Block Kit/Discord embed 변환·전송을 재사용한다.
+
+- 기본 예약 비활성. `MEETODO_DIGEST_ENABLED=true`일 때 평일 09:00 Asia/Seoul에 실행한다. `MEETODO_DIGEST_CRON` 기본값은 `0 0 9 * * MON-FRI`다. 평일은 월~금이며 공휴일 달력을 적용하지 않는다.
+- 날짜 계산은 주입 Clock을 서울 시간대로 사용한다. TODO 중 마감 지남(dueDate<오늘), 오늘 마감, 3일 이내(내일~오늘+3일, 달력 날짜)만 보낸다. 마감일 없는 TODO는 본문에서 빼고 하단 개수에 표시한다. DONE과 오늘+4일 이후는 제외한다.
+- 담당자 ID별로 묶고 전체 이름(팀)을 표시한다. 같은 이름 다른 팀원도 별개다. 미정 묶음은 마지막이며 저장된 상세 경고를 유지한다. 담당자마다 날짜·ID 순서로 정렬하고 각 Task 한 줄에 구간을 표시한다.
+- 대상이나 Notifier 설정이 없으면 SKIPPED로 남기고 전송하지 않는다. 항상 단일 메시지이며 제한을 넘으면 최대 접두 목록과 `외 N건은 GET /api/tasks에서 확인`을 붙인다.
+- DailyDigest(digestDate unique, status, sentAt, 구간별 건수·마감 없음 건수)를 전송 전에 별도 트랜잭션으로 선점·커밋한다. 같은 날짜 유니크 충돌은 실패한 트랜잭션 바깥에서 처리한다. 정상 동시 실행은 한 번만 전송한다.
+- 전송 실패는 FAILED/일반화된 오류 코드로 저장하고 자동 재시도하지 않는다. 이미 보냈을 가능성이 있는 타임아웃에서 중복보다 누락을 택한다. PENDING/SKIPPED/FAILED도 그날 행이 있으면 후속 일반 실행은 ALREADY_SENT다. 이 응답은 이미 선점됐다는 뜻이며 실제 전송 완료를 보장하지 않는다.
+- 개발 API: `POST /api/dev/digest/run?date=2026-11-20&force=false`. local 프로필에서만 존재하며 OpenAI/예약 활성화는 필요 없다. date 생략 시 Clock의 서울 오늘이다. date 형식 오류는 400 VALIDATION_ERROR. 응답은 digestDate, status, overdueCount, todayCount, upcomingCount, noDueDateCount다.
+- `force=true`는 그 날짜의 같은 행을 마지막 실행 결과로 갱신하며 의도적으로 재전송한다. 개발 확인용 예외이고 동시 강제 실행의 중복 발송을 막지 않는다. 운영 프로필에는 수동 API가 없다.
+
+데모 실행은 기존 SLACK_WEBHOOK_URL 설정을 유지하고 `NOTIFIER_TYPE=slack ./gradlew bootRun --args='--spring.profiles.active=local'`로 시작한다. OpenAI 키가 필요 없다. 예약을 켤 때만 `export MEETODO_DIGEST_ENABLED=true`를 추가한다. cron 변경 예: `export MEETODO_DIGEST_CRON='0 30 9 * * MON-FRI'`.
+
+기존 E 스키마 DB에는 새 daily_digests 테이블을 ddl-auto=update로 추가하므로 이번 단계만을 위해 data/를 초기화할 필요는 없다. 선점 후 프로세스 종료는 PENDING을 남길 수 있고, 전송 성공 후 상태 저장 실패는 전달 여부가 불명확할 수 있다. 정확히 한 번 전달은 보장하지 않으며 향후 Outbox/재처리 정책으로 개선할 수 있다. 여러 인스턴스 보호는 **같은 DB를 공유할 때** 유효하다. 현재 H2 파일을 여러 서버가 공유하는 배포는 지원하지 않으며 PostgreSQL 단계에서 검증한다. 현재 실제 Notifier는 local & !test이고 배포 프로필에서의 활성화는 배포 단계에 맞춰야 한다.
+
+[5단계 확인 문서](fifthStepDone.md)에 데모 데이터·실행 요청·Slack 예상 모습·변경 파일·면접 질문을 정리했다.
+
+5단계 검증: `./gradlew test bootJar --no-daemon` 성공, 전체 **279개 / 실패·오류·건너뜀 0**. 실제 외부 채널과 평일9시 예약 실행은 사용자 확인 단계다.

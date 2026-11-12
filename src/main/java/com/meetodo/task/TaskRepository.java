@@ -1,6 +1,7 @@
 package com.meetodo.task;
 
 import java.util.List;
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.Optional;
 
@@ -10,6 +11,10 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface TaskRepository extends JpaRepository<Task, Long> {
+    @Query("select task from Task task left join fetch task.assignee where task.status = :status and task.dueDate <= :lastDate")
+    List<Task> findDigestTasks(@Param("status") TaskStatus status, @Param("lastDate") LocalDate lastDate);
+    long countByStatusAndDueDateIsNull(TaskStatus status);
+
     List<Task> findAllByOrderByCreatedAtDesc();
     List<Task> findAllByAssigneeOrderByCreatedAtDesc(Member assignee);
     List<Task> findAllByAssigneeIsNullOrderByCreatedAtDesc();

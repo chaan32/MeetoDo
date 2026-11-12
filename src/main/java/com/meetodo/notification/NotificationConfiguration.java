@@ -13,7 +13,7 @@ import org.springframework.core.type.AnnotatedTypeMetadata;
 import org.springframework.util.StringUtils;
 
 @Configuration(proxyBeanMethods = false)
-@Profile("local & openai & !test")
+@Profile("local & !test")
 public class NotificationConfiguration {
     @Bean
     @Conditional(WebhookConfigured.class)

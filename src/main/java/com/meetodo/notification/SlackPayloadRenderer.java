@@ -16,19 +16,19 @@ public class SlackPayloadRenderer {
         if (allFit) {
             included.addAll(message.taskLines());
         } else {
-            // shortcut: 한 메시지에 들어가는 접두 목록만 전송한다. 전체 목록은 회의 조회 API로 확인한다.
+            // shortcut: 한 메시지에 들어가는 접두 목록만 전송한다. 전체 목록은 메시지 유형에 맞는 조회 API로 확인한다.
             for (String line : message.taskLines()) {
                 int remaining = message.taskLines().size() - included.size() - 1;
                 List<String> candidate = new ArrayList<>(included);
                 candidate.add(line);
-                String omitted = remaining == 0 ? "" : omission(message.meetingId(), remaining);
+                String omitted = remaining == 0 ? "" : message.omission(remaining);
                 if (line.length() > 3000 || 3 + candidate.size() + (remaining == 0 ? 0 : 1) > 50
                         || fallback(title, summary, candidate, omitted, footer).length() > 40000) break;
                 included.add(line);
             }
         }
         int remaining = message.taskLines().size() - included.size();
-        String omitted = remaining == 0 ? "" : omission(message.meetingId(), remaining);
+        String omitted = remaining == 0 ? "" : message.omission(remaining);
         List<Map<String, Object>> blocks = new ArrayList<>();
         blocks.add(block("header", title));
         blocks.add(block("section", summary));
@@ -53,10 +53,6 @@ public class SlackPayloadRenderer {
         if (!omitted.isEmpty()) lines.add(omitted);
         lines.add(footer);
         return String.join("\n", lines).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-    }
-
-    private String omission(Long meetingId, int count) {
-        return "외 " + count + "건은 GET /api/meetings/" + meetingId + "에서 확인";
     }
 
     private String truncate(String text, int limit) {
