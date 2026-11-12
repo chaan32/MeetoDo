@@ -114,7 +114,7 @@ public class Task {
 
     public Long getId() { return id; }
     public static String normalizeTitle(String title) {
-        return title == null ? "" : title.strip().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
+        return TaskTitles.clean(title).toLowerCase(Locale.ROOT);
     }
     public String getTitle() { return title; }
     public Member getAssignee() { return assignee; }

@@ -8,7 +8,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 @Schema(description = "할 일 생성 요청. 허용 필드: title, assigneeId, assigneeName, dueDate")
 public record CreateTaskRequest(
-        @Schema(description = "할 일 제목 (최대 200자)", example = "회의실 예약 확인")
+        @Schema(description = "짧은 명사형 업무 이름 (1~200자). 담당자·마감일·문장 어미를 넣지 않습니다. 문장형은 400 VALIDATION_ERROR, 끝 마침표·공백은 정리합니다.", example = "회의실 예약 확인")
         @NotBlank @Size(max = 200) String title,
         @Schema(description = "담당자 ID. 지정 시 이름보다 우선합니다.", example = "1")
         Long assigneeId,

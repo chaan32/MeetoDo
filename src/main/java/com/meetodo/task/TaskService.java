@@ -35,10 +35,11 @@ public class TaskService {
     }
 
     public TaskResponse create(CreateTaskRequest request) {
+        String title = TaskTitles.validateAndClean(request.title());
         Member assignee = resolveAssignee(request.assigneeId(), request.assigneeName());
-        Task existing = findExistingTodo(request.title(), assignee);
+        Task existing = findExistingTodo(title, assignee);
         if (existing != null) throw new DuplicateTaskException(existing.getId());
-        return TaskResponse.from(tasks.save(Task.create(request.title().trim(), assignee, request.dueDate())));
+        return TaskResponse.from(tasks.save(Task.create(title, assignee, request.dueDate())));
     }
 
     private Member resolveAssignee(Long assigneeId, String assigneeName) {
@@ -71,7 +72,7 @@ public class TaskService {
     }
 
     public ToolTaskResult createFromToolIdempotently(String title, Member assignee, LocalDate dueDate, Meeting meeting, UnresolvedAssignee unresolved) {
-        String normalizedTitle = title.trim();
+        String normalizedTitle = TaskTitles.validateAndClean(title);
         Task existing = findExistingTodo(normalizedTitle, assignee);
         if (existing != null) return new ToolTaskResult(TaskResponse.from(existing), false);
         Task saved = tasks.save(Task.create(normalizedTitle, assignee, dueDate, meeting, unresolved));

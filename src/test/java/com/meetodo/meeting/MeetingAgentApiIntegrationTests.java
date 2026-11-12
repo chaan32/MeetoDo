@@ -769,6 +769,36 @@ class MeetingAgentApiIntegrationTests {
                 .andExpect(jsonPath("$.validationFailureCount").value(0));
     }
 
+
+    @Test void rejectsSentenceTitleThenRegistersNounPhraseOnModelRetry() throws Exception {
+        // 실제 문장형 인자를 mock LLM이 보낸 뒤 오류를 읽고 명사형으로 재시도하면 한 건만 저장한다.
+        long minsuId=members.findAllByGivenNameOrderByIdAsc("민수").getFirst().getId();
+        ChatResponse[] responses={
+                rawToolResponse("findMember","{\"name\":\"민수\"}"),
+                rawToolResponse("findTasks","{\"assigneeId\":" + minsuId + ",\"title\":\"배포 로그 정리\"}"),
+                rawToolResponse("createTask","{\"title\":\"배포 로그를 정리한다.\",\"assignee\":\"member:" + minsuId + "\",\"dueDate\":\"\"}"),
+                rawToolResponse("createTask","{\"title\":\"배포 로그 정리\",\"assignee\":\"member:" + minsuId + "\",\"dueDate\":\"\"}"),
+                textResponse("배포 로그 정리를 등록했습니다.")};
+        when(model.call(any(org.springframework.ai.chat.prompt.Prompt.class))).thenReturn(responses[0],java.util.Arrays.copyOfRange(responses,1,responses.length));
+        String response=submitStageA("민수는 배포 로그를 정리한다.")
+                .andExpect(jsonPath("$.tasks",org.hamcrest.Matchers.hasSize(1)))
+                .andExpect(jsonPath("$.tasks[0].title").value("배포 로그 정리"))
+                .andExpect(jsonPath("$.tasks[0].resultType").value("CREATED"))
+                .andExpect(jsonPath("$.llmCallCount").value(5))
+                .andExpect(jsonPath("$.toolCallCount").value(4))
+                .andExpect(jsonPath("$.validationFailureCount").value(1))
+                .andReturn().getResponse().getContentAsString();
+        long meetingId=new ObjectMapper().readTree(response).path("meetingId").asLong();
+        var recorded=logs.findAllByMeetingIdOrderByCallOrderAsc(meetingId);
+        assertThat(recorded.get(2).getSuccess()).isFalse();
+        assertThat(recorded.get(2).getErrorCode()).isEqualTo("INVALID_TITLE_FORMAT");
+        assertThat(recorded.get(2).getResult()).contains("명사형 업무 이름");
+        assertThat(recorded.get(3).getSuccess()).isTrue(); assertThat(tasks.count()).isEqualTo(1);
+        var prompts=org.mockito.ArgumentCaptor.forClass(org.springframework.ai.chat.prompt.Prompt.class);
+        org.mockito.Mockito.verify(model,org.mockito.Mockito.times(5)).call(prompts.capture());
+        assertThat(prompts.getAllValues().get(3).getInstructions().toString()).contains("INVALID_TITLE_FORMAT","명사형 업무 이름");
+    }
+
     private ChatResponse rawCreate(String assignee) throws Exception {
         return rawToolResponse("createTask", new ObjectMapper().writeValueAsString(java.util.Map.of(
                 "title", "API 수정", "assignee", assignee, "dueDate", "", "lookupCallOrder", 1)));

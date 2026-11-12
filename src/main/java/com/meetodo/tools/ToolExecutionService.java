@@ -128,7 +128,7 @@ public class ToolExecutionService {
             String priorTitle = json.path("title").asText("").trim();
             String priorAssignee = json.path("assigneeName").asText(json.path("assignee").asText("")).trim();
             String currentAssignee = assignee == null ? "" : assignee.trim();
-            return priorTitle.equalsIgnoreCase(title.trim()) && priorAssignee.equalsIgnoreCase(currentAssignee);
+            return com.meetodo.task.Task.normalizeTitle(priorTitle).equals(com.meetodo.task.Task.normalizeTitle(title)) && priorAssignee.equalsIgnoreCase(currentAssignee);
         } catch (JsonProcessingException exception) {
             return false;
         }

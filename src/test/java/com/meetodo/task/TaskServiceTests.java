@@ -144,6 +144,30 @@ class TaskServiceTests {
         verify(taskRepository).save(any(Task.class));
     }
 
+    @Test void rejectsSentenceTitleBeforeResolvingAssigneeOrSaving() {
+        // 직접 서비스 호출도 담당자 조회보다 먼저 동일 제목 검증을 수행한다.
+        assertThatThrownBy(() -> taskService.create(new CreateTaskRequest("배포 로그를 정리한다.", "없는 사람", null)))
+                .isInstanceOf(com.meetodo.task.exception.InvalidTaskTitleException.class);
+        org.mockito.Mockito.verifyNoInteractions(memberRepository,taskRepository);
+    }
+
+    @Test void toolServiceCannotBypassSentenceTitleValidation() {
+        // 도구 래퍼를 거치지 않아도 서비스 저장 경계에서 문장형 제목을 거절한다.
+        assertThatThrownBy(() -> taskService.createFromToolIdempotently("배포 로그를 정리한다.",null,null,meetingWithId(10L)))
+                .isInstanceOf(com.meetodo.task.exception.InvalidTaskTitleException.class);
+        org.mockito.Mockito.verifyNoInteractions(taskRepository);
+    }
+
+    @Test void reusesLegacyNominalTodoWithFinalPeriod() {
+        // 과거 마침표 포함 제목을 변경하지 않고 새 명사형 입력과 TODO 중복으로 찾는다.
+        Task existing=Task.create("배포 로그 정리.",null,null,meetingWithId(10L)).withId(3L,Instant.EPOCH);
+        when(taskRepository.findAllByAssigneeIsNullAndStatusOrderByCreatedAtDesc(TaskStatus.TODO)).thenReturn(List.of(existing));
+        var result=taskService.createFromToolIdempotently("배포 로그 정리",null,null,meetingWithId(11L));
+        assertThat(result.created()).isFalse(); assertThat(result.task().id()).isEqualTo(3L);
+        assertThat(existing.getTitle()).isEqualTo("배포 로그 정리.");
+        verify(taskRepository,never()).save(any(Task.class));
+    }
+
     private Meeting meetingWithId(long id) {
         Meeting meeting = Meeting.create("test meeting " + id, MeetingSource.API_TEXT);
         org.springframework.test.util.ReflectionTestUtils.setField(meeting, "id", id);

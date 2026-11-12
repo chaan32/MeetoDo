@@ -270,6 +270,15 @@ class SpringAiMeetingAgentTests {
                         java.time.LocalDate.parse("2026-11-15"), java.time.LocalDate.parse("2026-11-12"));
     }
 
+    @Test void modelPromptIncludesNounTitleRulesAndGoodAndBadExamples() {
+        // 실제 모델 입력 시스템 메시지에 제목 규칙과 수정 예시가 전달된다.
+        when(model.call(any(Prompt.class))).thenReturn(textResponse("완료"));
+        agent.process(meetingWithId("민수는 API 명세를 정리한다.",91L));
+        var prompts=org.mockito.ArgumentCaptor.forClass(Prompt.class); verify(model).call(prompts.capture());
+        assertThat(prompts.getValue().getInstructions().getFirst().getText())
+                .contains("명사형 업무 이름","좋은 예:","나쁜 예:","API 명세 정리","배포 로그를 정리한다.","INVALID_TITLE_FORMAT");
+    }
+
     private Meeting meetingWithId(String text, long id) {
         Meeting meeting = Meeting.create(text, MeetingSource.API_TEXT);
         ReflectionTestUtils.setField(meeting, "id", id);

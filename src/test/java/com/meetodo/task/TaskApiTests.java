@@ -173,4 +173,48 @@ class TaskApiTests {
                 .andExpect(jsonPath("$", hasSize(1)))
                 .andExpect(jsonPath("$[0].assignee.team").value("백엔드팀"));
     }
+    @Test void rejectsSentenceTitleWithActionableTitleFieldError() throws Exception {
+        // 문장형 제목을 조용히 저장하지 않고 명사형으로 고칠 방법을 title 오류에 안내한다.
+        mvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"배포 로그를 정리한다.\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.fieldErrors.title").value("제목은 명사형 업무 이름으로 넣으세요. 예: '배포 로그를 정리한다.' → '배포 로그 정리'"));
+    }
+
+    @Test void createsNominalTitleAfterCleaningWhitespaceAndFinalPeriods() throws Exception {
+        // 명사형 제목의 공백·끝 마침표만 정리하고 한국어 단어는 바꾸지 않는다.
+        mvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"  API  명세 정리. .  \"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.title").value("API 명세 정리"));
+    }
+
+    @Test void finalPeriodDoesNotCreateAnotherTodoTask() throws Exception {
+        // 직접 API도 끝 마침표 차이만 있는 미완료 업무를 기존 ID가 든 409로 거절한다.
+        String first=mvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"배포 로그 정리\"}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long id=com.fasterxml.jackson.databind.json.JsonMapper.builder().build().readTree(first).get("id").asLong();
+        mvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"배포 로그 정리.\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DUPLICATE_TASK"))
+                .andExpect(jsonPath("$.existingTaskId").value(id));
+        mvc.perform(get("/api/tasks")).andExpect(status().isOk()).andExpect(jsonPath("$",hasSize(1)));
+    }
+
+    @Test void finalPeriodDoesNotPreventNewTaskAfterMatchingTaskIsDone() throws Exception {
+        // 정리된 제목이 같더라도 완료한 업무는 새 TODO 등록을 막지 않는다.
+        String first=mvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"배포 로그 정리\"}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long id=com.fasterxml.jackson.databind.json.JsonMapper.builder().build().readTree(first).get("id").asLong();
+        mvc.perform(patch("/api/tasks/{id}",id).contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"DONE\"}"))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"배포 로그 정리.\"}"))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.title").value("배포 로그 정리"));
+        mvc.perform(get("/api/tasks")).andExpect(status().isOk()).andExpect(jsonPath("$",hasSize(2)));
+    }
+
 }

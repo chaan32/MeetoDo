@@ -6,6 +6,7 @@ import java.util.TreeMap;
 import com.meetodo.task.exception.ResourceNotFoundException;
 import com.meetodo.task.exception.AmbiguousMemberException;
 import com.meetodo.task.exception.DuplicateTaskException;
+import com.meetodo.task.exception.InvalidTaskTitleException;
 import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
@@ -27,6 +28,12 @@ public class TaskApiExceptionHandler {
         }
         return ResponseEntity.badRequest().body(new ApiError(
                 "VALIDATION_ERROR", "Request validation failed.", fields));
+    }
+
+    @ExceptionHandler(InvalidTaskTitleException.class)
+    ResponseEntity<ApiError> invalidTitle(InvalidTaskTitleException exception) {
+        return ResponseEntity.badRequest().body(new ApiError("VALIDATION_ERROR", exception.getMessage(),
+                Map.of("title", exception.getMessage())));
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)

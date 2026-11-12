@@ -37,7 +37,7 @@ public class FindTasksTool {
     @Tool(name = "findTasks", description = "모든 회의에서 같은 담당자 ID와 정규화 제목의 미완료(TODO) 할 일을 찾는다. 담당자 미정은 assigneeId를 null로 전달한다.")
     public ToolResult invokeFindTasks(@ToolParam(description = "findMember 후보의 ID. 담당자 미정이면 null") Long assigneeId,
                                      @ToolParam(description = "담당자 이름. 미정이면 빈 값") String assigneeName,
-                                     @ToolParam(description = "중복 여부를 확인할 할 일 제목") String title,
+                                     @ToolParam(description = "createTask와 같은 짧은 명사형 업무 제목. 예: API 명세 정리, 배포 로그 정리. 담당자·마감일·문장 어미·끝 마침표 제외") String title,
                                      @ToolParam(description = "담당자 미정인 경우 AMBIGUOUS / NOT_FOUND / TEAM_MISMATCH / NONE. 배정된 경우 생략", required = false) String unassignedReason,
                                      ToolContext toolContext) {
         return findTasks(assigneeId, assigneeName, title, unassignedReason, execution.meetingFrom(toolContext));
