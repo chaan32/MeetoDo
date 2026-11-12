@@ -311,3 +311,22 @@ docker compose --profile replica up -d --wait
 [fifthStepDone.md](fifthStepDone.md)의 실제 Slack 날짜 선점 검증에 이어 [seventhStepDone.md](seventhStepDone.md)에 이미지·마이그레이션·동시 앱 검증과 두 인스턴스 요청 명령을 정리했다.
 
 7단계 실제 검증: 전체 **301개 / 실패·오류·건너뜀0**, 실제 PostgreSQL Testcontainers13개와 Docker프로필9개 포함. 이미지 build·두앱 healthy/non-root·로컬mock 동시발송1회·컨테이너 재생성 뒤 데이터 보존 확인. 외부 메신저/OpenAI 호출 및 사용자 DB 삭제는 하지 않았다.
+
+
+## Slack 봇 — 단계 1 (Swagger 입력)
+
+기존 `NOTIFIER_TYPE=slack` 웹훅·discord에 `slack-bot`을 추가한다. `MEETODO_SLACK_BOT_ENABLED=true`와 SLACK_APP_TOKEN(xapp), SLACK_BOT_TOKEN(xoxb)이 있어야 local/docker에서 Socket Mode를 시작한다. test·기본 실행은 연결하지 않는다. SLACK_CHANNEL_ID는 결과를 보낼 채널이다. 토큰은 키체인→환경변수만 사용하고 SDK 진단 로그와 공통 ToolCallLog 마스킹에 xoxb/xapp을 포함한다.
+
+현재 단계는 **Swagger POST /api/meetings → chat.postMessage → 완료 버튼**이다. /meetodo 모달·제출·처리 중 메시지·중복 ephemeral 흐름은 단계2 확인 전 구현하지 않는다.
+
+- 실제 U/W 영숫자 Slack ID만 `<@ID>` 멘션으로 생성하고 U-DEV 가짜 ID는 전체 이름(팀)으로 표시한다. 제목·미정 경고 등의 사용자 문자열은 이스케이프해 임의 멘션을 만들지 않는다.
+- TODO만 ✅ 완료 버튼을 붙인다. Task에 완료자 Slack ID·완료 시각을 저장한다. 담당자가 있으면 본인만 완료하며 다른 사람에게는 ephemeral로 “담당자만 완료할 수 있어요”를 보낸다. 미정은 누구나 완료 가능하다.
+- Socket Mode 실제 wire ACK를 먼저 보낸 후 bounded worker에서 DB/메신저 처리를 수행한다. SDK 기본 adapter의 ctx.ack 반환만으로 ACK 전송 순서를 가정하지 않았다.
+- 상태 전이는 기존 PATCH와 같은 Task 로직을 사용한다. 이미 DONE이면 최초 완료자/시각을 유지한다. PATCH로 TODO를 다시 열면 완료 정보를 비운다. PATCH로 완료한 경우 Slack 완료자는 없으므로 임의 사용자 멘션을 만들지 않는다.
+- DB가 원본이다. 게시 메시지의 채널·ts·Task ID 목록을 보존하고 클릭 때 DB의 현재 상태로 다시 만들어 chat.update한다. 다이제스트의 완료 Task도 원래 메시지에 남는다. Slack 메시지 본문을 상태 저장소로 사용하지 않는다.
+- V2가 Task 완료 정보, Meeting Slack 위치, Slack 메시지 참조를 추가한다. 기존 DONE의 완료자·시각은 추정 백필하지 않는다. local ddl-auto=update, docker는 Flyway V2로 적용하므로 정상 기존 DB를 초기화할 필요가 없다.
+- local 개발 샘플 전해찬은 DEV_SLACK_USER_ID 실제 ID를 지정하면 기존 행에도 적용한다. 새 DB에서 생략하면 U-DEV-HAECHAN이다. 기존 실제 ID는 환경변수를 생략해도 지우지 않는다. 같은 전체 이름·팀 후보가 여러 명이면 임의로 바꾸지 않는다.
+
+[Slack 봇 단계1 확인 문서](slackBotStep1Done.md)에 키체인 실행·Docker 샘플 ID 설정·Swagger 입력·권한/완료 확인 절차와 실제 자동 테스트 결과를 정리한다. 다른 메시지 전체를 실시간으로 갱신하는 기능은 없으며, DB는 저장됐지만 Slack 갱신만 실패할 수 있다. 실제 멘션 알림 도달과 Socket 연결은 사용자가 확인한다.
+
+Slack 봇 단계1 검증: 전체 **355개 / 실패·오류·건너뜀0**, test·bootJar 성공. 실제 Slack/Socket 연결은 하지 않았으며 사용자 Swagger 실측 후 단계2로 진행한다.

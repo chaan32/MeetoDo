@@ -33,3 +33,9 @@ meetodo:
   digest:
     enabled: ${MEETODO_DIGEST_ENABLED:false}
     cron: ${MEETODO_DIGEST_CRON:0 0 9 * * MON-FRI}
+
+# SDK diagnostics may include Slack payloads or connection URLs; our boundary logs safe codes only.
+logging:
+  level:
+    com.slack.api: OFF
+    org.glassfish.tyrus: OFF

@@ -11,6 +11,11 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface TaskRepository extends JpaRepository<Task, Long> {
+    // Lock only the task: PostgreSQL cannot lock the nullable side of an assignee outer join.
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select task from Task task where task.id = :id")
+    Optional<Task> findByIdForUpdate(@Param("id") Long id);
+
     @Query("select task from Task task left join fetch task.assignee where task.status = :status and task.dueDate <= :lastDate")
     List<Task> findDigestTasks(@Param("status") TaskStatus status, @Param("lastDate") LocalDate lastDate);
     long countByStatusAndDueDateIsNull(TaskStatus status);

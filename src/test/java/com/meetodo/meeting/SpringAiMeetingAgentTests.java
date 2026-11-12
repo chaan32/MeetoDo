@@ -69,7 +69,7 @@ class SpringAiMeetingAgentTests {
         Clock clock = Clock.fixed(Instant.parse("2026-11-11T00:00:00Z"), ZoneId.of("Asia/Seoul"));
         agent = new SpringAiMeetingAgent(model, ToolCallingManager.builder().build(),
                 new FindMemberTool(members, execution), new FindTasksTool(members, tasks, execution, mentions),
-                new CreateTaskTool(members, new TaskService(tasks, members, mentions), mentions, execution, clock),
+                new CreateTaskTool(members, new TaskService(tasks, members, mentions, java.time.Clock.systemUTC()), mentions, execution, clock),
                 clock, execution);
         when(members.findAllByGivenNameOrderByIdAsc("민수")).thenReturn(List.of(new Member("김", "민수", "미지정", "U-DEV-MINSU")));
     }

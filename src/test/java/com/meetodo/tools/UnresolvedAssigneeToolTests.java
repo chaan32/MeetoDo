@@ -44,7 +44,7 @@ class UnresolvedAssigneeToolTests {
         execution = new ToolExecutionService(logs, mapper);
         var mentions = mock(TaskMentionService.class);
         find = new FindMemberTool(members, execution);
-        create = new CreateTaskTool(members, new TaskService(tasks, members, mentions), mentions,
+        create = new CreateTaskTool(members, new TaskService(tasks, members, mentions, java.time.Clock.systemUTC()), mentions,
                 execution, Clock.fixed(Instant.parse("2026-11-12T00:00:00Z"), ZoneId.of("Asia/Seoul")));
         meeting = meeting(1L, "프론트엔드팀 해찬과 지영 담당 확인");
     }

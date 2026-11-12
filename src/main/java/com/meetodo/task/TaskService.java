@@ -25,11 +25,13 @@ public class TaskService {
     private final TaskRepository tasks;
     private final MemberRepository members;
     private final TaskMentionService mentions;
+    private final java.time.Clock clock;
 
-    public TaskService(TaskRepository tasks, MemberRepository members, TaskMentionService mentions) {
+    public TaskService(TaskRepository tasks, MemberRepository members, TaskMentionService mentions, java.time.Clock clock) {
         this.tasks = tasks;
         this.members = members;
         this.mentions = mentions;
+        this.clock = clock;
     }
 
     public TaskResponse create(CreateTaskRequest request) {
@@ -101,10 +103,24 @@ public class TaskService {
     public List<TaskResponse> findAll(String assigneeName) { return findAll(assigneeName, null); }
 
     public TaskResponse updateStatus(Long id, UpdateTaskStatusRequest request) {
-        Task task = tasks.findById(id).orElseThrow(() ->
+        Task task = tasks.findByIdForUpdate(id).orElseThrow(() ->
                 new ResourceNotFoundException("TASK_NOT_FOUND", "Task was not found."));
-        task.changeStatus(request.status());
+        task.changeStatus(request.status(), null, clock.instant());
         task = tasks.save(task);
+        return TaskResponse.from(task, countsFor(List.of(task)).getOrDefault(task.getId(), 0L));
+    }
+
+    public TaskResponse completeFromSlack(Long id, String actorSlackUserId) {
+        if (actorSlackUserId == null || !actorSlackUserId.matches("[UW][A-Z0-9]{1,79}"))
+            throw new IllegalArgumentException("A valid Slack user ID is required");
+        Task task = tasks.findByIdForUpdate(id).orElseThrow(() ->
+                new ResourceNotFoundException("TASK_NOT_FOUND", "Task was not found."));
+        if (task.getStatus() != TaskStatus.DONE) {
+            if (task.getAssignee() != null && !actorSlackUserId.equals(task.getAssignee().getSlackUserId()))
+                throw new TaskCompletionForbiddenException();
+            task.changeStatus(TaskStatus.DONE, actorSlackUserId, clock.instant());
+            task = tasks.save(task);
+        }
         return TaskResponse.from(task, countsFor(List.of(task)).getOrDefault(task.getId(), 0L));
     }
 

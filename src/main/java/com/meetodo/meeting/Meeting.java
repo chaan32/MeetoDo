@@ -84,6 +84,20 @@ public class Meeting {
     @Column(name = "notified_at")
     private Instant notifiedAt;
 
+    @Column(name = "slack_channel_id", length = 80)
+    private String slackChannelId;
+
+    @Column(name = "slack_message_ts", length = 80)
+    private String slackMessageTs;
+
+    public void recordSlackMessage(String channelId, String messageTs) {
+        this.slackChannelId = channelId;
+        this.slackMessageTs = messageTs;
+    }
+
+    public String getSlackChannelId() { return slackChannelId; }
+    public String getSlackMessageTs() { return slackMessageTs; }
+
     protected Meeting() {
     }
 

@@ -37,6 +37,8 @@ public class Member {
         this.slackUserId = slackUserId;
     }
 
+    public void changeSlackUserId(String slackUserId) { this.slackUserId = slackUserId; }
+
     public Long getId() { return id; }
     public String getFamilyName() { return familyName; }
     public String getGivenName() { return givenName; }

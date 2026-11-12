@@ -14,7 +14,6 @@ import com.meetodo.task.dto.UpdateTaskStatusRequest;
 import com.meetodo.task.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -31,7 +30,12 @@ class TaskServiceTests {
     @Mock TaskRepository taskRepository;
     @Mock MemberRepository memberRepository;
     @Mock TaskMentionService taskMentionService;
-    @InjectMocks TaskService taskService;
+    TaskService taskService;
+
+    @org.junit.jupiter.api.BeforeEach void setUp() {
+        taskService = new TaskService(taskRepository, memberRepository, taskMentionService,
+                java.time.Clock.fixed(Instant.parse("2026-11-12T03:00:00Z"), java.time.ZoneId.of("Asia/Seoul")));
+    }
 
     // 검증: createsTaskWithoutAssignee 시나리오의 기대 동작을 확인한다.
     @Test
@@ -76,7 +80,7 @@ class TaskServiceTests {
     @Test
     void changesTaskStatus() {
         Task task = Task.create("설계서 작성", null, null);
-        when(taskRepository.findById(1L)).thenReturn(Optional.of(task));
+        when(taskRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(task));
         when(taskRepository.save(task)).thenReturn(task);
 
         var result = taskService.updateStatus(1L, new UpdateTaskStatusRequest(TaskStatus.DONE));

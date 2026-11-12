@@ -473,3 +473,45 @@ E 백엔드팀 지영 1~3회는 findMember → findTasks → createTask, 지영 
 한계: H2→PostgreSQL 기존 데이터 복사, 기존 PG OID→text 데이터 변환, Kubernetes 배포, Task 동시 등록 경쟁 해결, Outbox·정확히 한 번 전달은 이번 범위가 아니다. V1 적용 후 스키마 변경은 V2 이후로 추가한다. Docker named volume 초기화는 사용자 명령으로만 안내한다. PostgreSQL Testcontainers는 Docker가 없을 때 조용히 건너뛰지 않고 실패한다.
 
 공식 근거: [Compose 시작 순서/health 조건](https://docs.docker.com/compose/how-tos/startup-order/), [Testcontainers PostgreSQL](https://java.testcontainers.org/modules/databases/postgres/), [Flyway PostgreSQL 모듈](https://documentation.red-gate.com/flyway/reference/database-driver-reference/postgresql-database). 실제 Spring Boot3.5.16 BOM의 Flyway11.7.2/Testcontainers1.21.4를 사용했고 TC1.21.4 PostgreSQLContainer 소스의 생성자·접속정보 API도 확인했다.
+
+
+## 2026-11-12 — Slack 봇 단계1
+
+승인 범위: Slack Bolt for Java1.54.0 + Socket Mode, Swagger 입력 결과를 봇 메시지로 보내 실제 ID 멘션·완료 버튼을 제공한다. /meetodo 모달은 단계2로 남긴다. 외부 실제 Slack·OpenAI를 호출하지 않고 MethodsClient/SocketModeClient를 mock으로 검증한다. 멘션과 완료 권한은 Member.slackUserId의 실제 ID를 기준으로 한다.
+
+Task와 Meeting의 새 필드 및 메시지 채널·ts·Task ID 목록에 Flyway V2를 추가한다. Task 완료는 PATCH와 Slack이 같은 상태 전이를 사용하고 row lock으로 최초 완료자/시각을 보존한다. 기존 DONE의 완료 메타데이터는 백필하지 않는다. 다이제스트는 완료 후 TODO 대상에서 빠져도 원래 메시지에서 완료 표시가 남도록 게시 당시 Task ID를 보존한다.
+
+역할 분담: 실제 Socket ACK를 먼저 전송하고 bounded worker에서 완료·DB 조회·메시지 수정을 수행한다. Slack 본문을 파싱해 상태를 추정하지 않는다. 사용자 텍스트는 escape하고 DB에 있는 검증한 실제 ID만 멘션 문자열로 만든다. 토큰·원문·SDK 예외 내용을 로그에 출력하지 않는다.
+
+## 2026-11-12 — Slack 토큰 마스킹 범위 추가
+- 증상: 합성 xoxb/xapp 토큰을 공통 도구 경계에 넣은 테스트에서 인자·결과에 원문이 남았다. 실제 토큰 유출을 발견한 것이 아니라 수정 전 테스트2개가 실패한 것이다.
+- 가설: 기존 sanitizer가 OpenAI 키·Bearer·웹훅 URL만 다루고 Slack 토큰 패턴을 포함하지 않는다.
+- 확인: redactsBotTokenFromArgumentsAndResult / redactsAppTokenFromArgumentsAndResult가 수정 전 assertion 실패했다.
+- 원인: 새 인증 방식의 비밀값 형태를 기존 공통 마스킹에 추가하지 않았다.
+- 해결 → 결과: xoxb/xapp 패턴을 공통 sanitizer에 추가하고 모델 반환값·ToolCallLog 인자/결과에 함께 적용했다. 전체 검증 결과는 단계1 완료 기록에 남긴다.
+
+## 2026-11-12 — AFTER_COMMIT 봇 메시지 좌표 저장 누락
+- 증상: mock Slack 성공 응답 뒤 실제 JPA 요청 종료 후 메시지 참조가 DB에 남지 않았다. postedMessageReferenceCommitsAfterMeetingCompletion 재현 테스트가 실패했다.
+- 가설: AFTER_COMMIT에서 기본 REQUIRED TransactionTemplate이 이미 커밋한 트랜잭션 자원에 참여해 새 저장이 커밋되지 않는다.
+- 확인: 실제 Meeting 처리·AFTER_COMMIT 리스너를 거친 뒤 별도 조회에서 채널/ts 참조가 없었다. 단순 repository mock 테스트로는 드러나지 않았다.
+- 원인: 외부 전송 후 DB 저장도 독립 트랜잭션이어야 하는데 기본 템플릿을 사용했다.
+- 해결 → 결과: 전용 REQUIRES_NEW 경계를 적용해 같은 실제 JPA 재현 테스트가 통과했다. 추가로 실제 DB 참조를 읽어 클릭 완료→Task DONE 저장→DB 재조회→mock chat.update까지 통과했다. 전체355개 테스트·bootJar도 성공했다.
+
+
+## 2026-11-12 — 봇 메시지 경고·잘림 경계 회귀
+- 증상: 새 봇 렌더러의 합성 테스트에서 큰 Task 줄이 중간에 잘렸고, 전체가 50블록에 맞아도 마지막 항목이 생략됐으며, 재사용 Task의 최초 이름과 이번 회의 이름 경고가 함께 표시됐다.
+- 가설: 일반 문자열 substring과 조기 생략 예약, Task 스냅샷 경고 뒤 회의 경고를 추가하는 방식이 기존 알림 정책과 충돌했다.
+- 확인: oversizedTaskLineIsOmittedWhole / allFittingFiftyBlocksDoNotReserveUnneededOmission / meetingWarningOverridesOriginalTaskSnapshotWithoutDuplication 3개가 수정 전 실패했다. 실제 Slack 채널에서 발견한 장애로 기록하지 않는다.
+- 원인: 봇 전용 렌더러가 기존의 완전한 항목 단위 생략·전체 수용 우선·현재 회의 조회 근거 우선 규칙을 유지하지 않았다.
+- 해결 → 결과: 전체 수용을 먼저 검사하고 플랫폼 제한 안의 최대 접두 목록만 보낸다. Task 줄은 통째로 생략하며 회의별 경고가 있으면 Task 최초 경고를 덧붙이지 않는다. 해당 회귀 테스트는 통과했고 전체 결과는 단계1 완료 기록에 남긴다.
+
+테스트 환경 정리: 새 AFTER_COMMIT 검증용 Notifier 설정이 기존 llm-ping의 일반 프로필 검사에도 스캔돼 8개 회귀가 실패했다. 실제 운영 프로필 오류가 아니라 테스트 픽스처 격리 문제다. 검증용 설정을 전용 테스트 프로필로 제한했다. 이 환경 문제는 위 서비스 로직 문제와 구분한다.
+
+
+단계1 최종 검증: `./gradlew test bootJar --no-daemon` BUILD SUCCESSFUL. **355개, 실패·오류·건너뜀 0**. 기존 llm-ping·프로필·Task API·웹훅·Discord 회귀를 포함한다. PostgreSQL Testcontainers는 V2 매핑·완료 정보·동시 완료·메시지 채널/ts 유니크를 검증했다. Socket/MethodsClient는 mock이며 실제 Slack/OpenAI를 호출하지 않았다.
+
+검증 내용: 실제/가짜 ID 멘션 분기·사용자 텍스트 escape, 담당자 본인/다른 사람/미정/기존 DONE/없는 Task, 최초 완료자·Clock 시각 보존·TODO 재개, DB 상태 재구성·버튼 제거, Task ID membership 변조 거절·ephemeral, wire ACK→큐 순서, 봇 기본 비활성·토큰 누락·test 차단, SDK 오류 일반화·xoxb/xapp 마스킹, 전체 수용·긴 항목 생략·50블록 경계·현재 회의 경고 우선을 확인했다. 소켓 실측 지연·연결/재연결·멘션 알림 도달·실제 채널 버튼은 사용자 확인 단계다.
+
+남은 범위: /meetodo 모달·처리 중 게시·모달 중복/실패/초대 안내는 단계2로 남겼다. DB 완료와 Slack 갱신은 원자적이지 않아 메시지 갱신만 실패할 수 있으며 DB 상태는 보존한다. 여러 메시지의 같은 Task를 전부 자동 동기화하지 않고 클릭한 원본만 갱신한다. 기존 DONE 메타데이터 백필·정확히 한 번 전달·Outbox는 구현하지 않았다. 개발 ID가 없는 새 DB는 가짜 ID이며, 이미 저장한 실제 개발 ID는 ENV 생략 시 지우지 않는다.
+
+공식 근거: [Socket Mode](https://docs.slack.dev/tools/java-slack-sdk/guides/socket-mode/), [Interactive Components/3초 ACK](https://docs.slack.dev/tools/java-slack-sdk/guides/interactive-components/), [chat.update](https://docs.slack.dev/reference/methods/chat.update/), [메시지 멘션](https://docs.slack.dev/messaging/formatting-message-text/), [버튼 필드](https://docs.slack.dev/reference/block-kit/block-elements/button-element/). 실제 SDK1.54.0 소스의 SocketModeApp supplier/startAsync, SocketModeRequestParser, App.blockAction, ChatPostMessage/Update/Ephemeral Request와 MethodsClient API를 확인했다. SDK 기본 adapter의 ACK 시점을 확인해 custom supplier의 단일 listener가 ACK를 먼저 보내도록 구현했다.

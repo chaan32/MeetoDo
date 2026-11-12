@@ -19,7 +19,7 @@ public class DailyDigestMessageFactory {
                 List.of("⏰ 마감 지남 " + digest.getOverdueCount() + "건", "📌 오늘 마감 " + digest.getTodayCount() + "건",
                         "📅 3일 이내 마감 " + digest.getUpcomingCount() + "건"), lines,
                 "기한 없는 미완료 할 일 " + digest.getNoDueDateCount() + "건 제외 · 기준일 " + today,
-                NotificationMessage.Type.DAILY_DIGEST);
+                NotificationMessage.Type.DAILY_DIGEST, today);
     }
 
     private String line(Task task, LocalDate today) {

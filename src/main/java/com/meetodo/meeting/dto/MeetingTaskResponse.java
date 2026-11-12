@@ -6,7 +6,14 @@ import com.meetodo.task.UnresolvedAssignee;
 
 public record MeetingTaskResponse(Long taskId, String title, String assigneeName, LocalDate dueDate,
                                   String assigneeTeam, String resultType, long mentionCount, String warning,
-                                  String unassignedReason, UnresolvedAssignee unresolvedAssignee) {
+                                  String unassignedReason, UnresolvedAssignee unresolvedAssignee,
+                                  com.meetodo.task.TaskStatus status, String assigneeSlackUserId,
+                                  String completedBySlackUserId, java.time.Instant completedAt) {
+    public MeetingTaskResponse(Long taskId, String title, String assigneeName, LocalDate dueDate, String assigneeTeam,
+                               String resultType, long mentionCount, String warning, String unassignedReason, UnresolvedAssignee detail) {
+        this(taskId, title, assigneeName, dueDate, assigneeTeam, resultType, mentionCount, warning, unassignedReason, detail,
+                com.meetodo.task.TaskStatus.TODO, null, null, null);
+    }
     public MeetingTaskResponse(Long taskId, String title, String assigneeName, LocalDate dueDate, String assigneeTeam,
                                String resultType, long mentionCount, String warning, String unassignedReason) {
         this(taskId, title, assigneeName, dueDate, assigneeTeam, resultType, mentionCount, warning, unassignedReason, null);
@@ -22,6 +29,8 @@ public record MeetingTaskResponse(Long taskId, String title, String assigneeName
         else if (detail != null) { warning = detail.warning(); reason = detail.reason(); }
         return new MeetingTaskResponse(task.getId(), task.getTitle(),
                 task.getAssignee() == null ? null : task.getAssignee().getName(), task.getDueDate(),
-                task.getAssignee() == null ? null : task.getAssignee().getTeam(), resultType, mentionCount, warning, reason, detail);
+                task.getAssignee() == null ? null : task.getAssignee().getTeam(), resultType, mentionCount, warning, reason, detail, task.getStatus(),
+                task.getAssignee() == null ? null : task.getAssignee().getSlackUserId(),
+                task.getCompletedBySlackUserId(), task.getCompletedAt());
     }
 }

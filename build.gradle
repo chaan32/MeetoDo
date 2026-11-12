@@ -32,6 +32,9 @@ dependencies {
     implementation 'org.springframework.ai:spring-ai-starter-model-openai'
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.17'
     implementation 'org.flywaydb:flyway-core'
+    implementation 'com.slack.api:bolt-socket-mode:1.54.0'
+    implementation 'javax.websocket:javax.websocket-api:1.1'
+    implementation 'org.glassfish.tyrus.bundles:tyrus-standalone-client:1.20'
     runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 
     runtimeOnly 'com.h2database:h2'
@@ -46,6 +49,9 @@ dependencies {
 tasks.named('test') {
     useJUnitPlatform()
     // Local credentials must not enable real webhook transports in profile-matrix tests.
+    environment 'MEETODO_SLACK_BOT_ENABLED', 'false'
+    environment 'SLACK_APP_TOKEN', ''
+    environment 'SLACK_BOT_TOKEN', ''
     environment 'MEETODO_DIGEST_ENABLED', 'false'
     environment 'NOTIFIER_TYPE', 'none'
     environment 'SLACK_WEBHOOK_URL', ''

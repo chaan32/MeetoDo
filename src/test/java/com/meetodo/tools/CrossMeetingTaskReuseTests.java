@@ -51,7 +51,7 @@ class CrossMeetingTaskReuseTests {
         repeatedMeeting = meetings.save(Meeting.create("끝에 #만 붙은 회의", MeetingSource.API_TEXT));
         execution = new ToolExecutionService(logs, new ObjectMapper());
         mentions = mock(TaskMentionService.class);
-        taskService = new TaskService(tasks, members, mentions);
+        taskService = new TaskService(tasks, members, mentions, java.time.Clock.systemUTC());
     }
 
     // 검증: 다른 회의의 미완료 작업과 담당자·정규화 제목이 같으면 조회 결과에 EXISTING으로 포함한다.

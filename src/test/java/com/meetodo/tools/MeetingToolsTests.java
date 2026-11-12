@@ -50,7 +50,7 @@ class MeetingToolsTests {
         tasks = mock(TaskRepository.class);
         logs = mock(ToolCallLogRepository.class);
         mentions = mock(TaskMentionService.class);
-        taskService = new TaskService(tasks, members, mentions);
+        taskService = new TaskService(tasks, members, mentions, java.time.Clock.systemUTC());
         execution = new ToolExecutionService(logs, new ObjectMapper());
         Clock clock = Clock.fixed(Instant.parse("2026-11-11T00:00:00Z"), ZoneId.of("Asia/Seoul"));
         testMeeting = Meeting.create("unit test meeting", MeetingSource.API_TEXT);

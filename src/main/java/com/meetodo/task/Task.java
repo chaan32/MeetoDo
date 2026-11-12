@@ -52,6 +52,12 @@ public class Task {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    @Column(name = "completed_by_slack_user_id", length = 80)
+    private String completedBySlackUserId;
+
+    @Column(name = "completed_at")
+    private Instant completedAt;
+
     protected Task() {
     }
 
@@ -86,8 +92,18 @@ public class Task {
     }
 
     public void changeStatus(TaskStatus status) {
-        this.status = status;
+        changeStatus(status, null, Instant.now());
     }
+
+    public void changeStatus(TaskStatus status, String actorSlackUserId, Instant at) {
+        if (this.status == status) return;
+        this.status = status;
+        completedBySlackUserId = status == TaskStatus.DONE ? actorSlackUserId : null;
+        completedAt = status == TaskStatus.DONE ? java.util.Objects.requireNonNull(at) : null;
+    }
+
+    public String getCompletedBySlackUserId() { return completedBySlackUserId; }
+    public Instant getCompletedAt() { return completedAt; }
 
     // Used by focused service tests to represent a persisted row.
     Task withId(Long id, Instant createdAt) {

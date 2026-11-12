@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 public class ToolExecutionService {
 
     private static final Pattern OPENAI_KEY = Pattern.compile("(?i)\\bsk-[A-Za-z0-9_-]{12,}\\b");
+    private static final Pattern SLACK_TOKEN = Pattern.compile("(?i)\\b(?:xoxb|xapp)-[A-Za-z0-9_-]+\\b");
     private static final Pattern BEARER = Pattern.compile("(?i)Bearer\\s+[A-Za-z0-9._~+/-]+=*");
     private static final Pattern AUTH_FIELD = Pattern.compile("(?i)(\\\"?(?:authorization|api[_-]?key)\\\"?\\s*[:=]\\s*\\\")[^\\\"]*(\\\")");
     private static final String REDACTED = "[REDACTED]";
@@ -180,6 +181,7 @@ public class ToolExecutionService {
         if (value == null) return null;
         if (meetingText != null && !meetingText.isBlank()) value = value.replace(meetingText, REDACTED);
         String redacted = WEBHOOK.matcher(value).replaceAll(REDACTED);
+        redacted = SLACK_TOKEN.matcher(redacted).replaceAll(REDACTED);
         redacted = OPENAI_KEY.matcher(redacted).replaceAll(REDACTED);
         redacted = BEARER.matcher(redacted).replaceAll("Bearer " + REDACTED);
         return AUTH_FIELD.matcher(redacted).replaceAll("$1" + REDACTED + "$2");

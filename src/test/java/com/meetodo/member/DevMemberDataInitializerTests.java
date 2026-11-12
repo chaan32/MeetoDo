@@ -13,7 +13,7 @@ class DevMemberDataInitializerTests {
     // 새 개발 샘플은 성을 명시하며 전체 이름과 팀 조합을 그대로 제공한다.
     @Test void seedsExplicitFamilyGivenAndTeamForFourDevelopmentMembers() throws Exception {
         var members = mock(MemberRepository.class);
-        new DevMemberDataInitializer().seedDevelopmentMembers(members).run(null);
+        new DevMemberDataInitializer().seedDevelopmentMembers(members, "").run(null);
         var captor = org.mockito.ArgumentCaptor.forClass(Member.class);
         verify(members, times(4)).save(captor.capture());
         assertThat(captor.getAllValues()).extracting(m -> m.getFullName() + "/" + m.getTeam())
@@ -25,8 +25,63 @@ class DevMemberDataInitializerTests {
     @Test void doesNotBackfillOrDuplicateExistingDevelopmentMembers() throws Exception {
         var members = mock(MemberRepository.class);
         when(members.existsBySlackUserId(any())).thenReturn(true);
-        new DevMemberDataInitializer().seedDevelopmentMembers(members).run(null);
+        new DevMemberDataInitializer().seedDevelopmentMembers(members, "").run(null);
         verify(members, never()).save(any());
+    }
+
+    // 기존 개발 계정은 실제 Slack ID로 갱신하며 새 행을 추가하지 않는다.
+    @Test void updatesKnownDevelopmentMemberWithoutDuplicating() throws Exception {
+        var members = mock(MemberRepository.class);
+        when(members.existsBySlackUserId(any())).thenReturn(true);
+        var member = new Member("전", "해찬", "백엔드팀", "U-DEV-HAECHAN");
+        when(members.findAllByNameOrderByIdAsc("전해찬")).thenReturn(java.util.List.of(member));
+        new DevMemberDataInitializer().seedDevelopmentMembers(members, "U123ABC").run(null);
+        assertThat(member.getSlackUserId()).isEqualTo("U123ABC");
+        verify(members).save(member);
+    }
+
+    // 같은 전체 이름과 팀이 여러 명이면 임의의 사람에게 Slack ID를 배정하지 않는다.
+    @Test void doesNotUpdateAmbiguousDevelopmentMembers() throws Exception {
+        var members = mock(MemberRepository.class);
+        when(members.existsBySlackUserId(any())).thenReturn(true);
+        var first = new Member("전", "해찬", "백엔드팀", "U-DEV-HAECHAN");
+        var second = new Member("전", "해찬", "백엔드팀", "U999ABC");
+        when(members.findAllByNameOrderByIdAsc("전해찬")).thenReturn(java.util.List.of(first, second));
+        new DevMemberDataInitializer().seedDevelopmentMembers(members, "U123ABC").run(null);
+        assertThat(first.getSlackUserId()).isEqualTo("U-DEV-HAECHAN");
+        assertThat(second.getSlackUserId()).isEqualTo("U999ABC");
+        verify(members, never()).save(any());
+    }
+
+    // 잘못된 환경 변수는 기존 ID를 덮어쓰지 않는다.
+    @Test void ignoresMalformedDevelopmentSlackId() throws Exception {
+        var members = mock(MemberRepository.class);
+        when(members.existsBySlackUserId(any())).thenReturn(true);
+        var member = new Member("전", "해찬", "백엔드팀", "U123ABC");
+        when(members.findAllByNameOrderByIdAsc("전해찬")).thenReturn(java.util.List.of(member));
+        new DevMemberDataInitializer().seedDevelopmentMembers(members, "U-DEV-HAECHAN").run(null);
+        assertThat(member.getSlackUserId()).isEqualTo("U123ABC");
+        verify(members, never()).save(any());
+    }
+
+    // 환경 변수가 없어도 기존 실제 Slack ID를 가짜 개발 ID로 되돌리지 않는다.
+    @Test void preservesActualSlackIdWhenEnvironmentIsAbsent() throws Exception {
+        var members = mock(MemberRepository.class);
+        when(members.existsBySlackUserId(any())).thenReturn(true);
+        var member = new Member("전", "해찬", "백엔드팀", "U123ABC");
+        when(members.findAllByNameOrderByIdAsc("전해찬")).thenReturn(java.util.List.of(member));
+        new DevMemberDataInitializer().seedDevelopmentMembers(members, "").run(null);
+        assertThat(member.getSlackUserId()).isEqualTo("U123ABC");
+        verify(members, never()).save(any());
+    }
+
+    // 새 개발 계정에도 제공된 실제 ID를 사용한다.
+    @Test void seedsActualSlackIdForNewDevelopmentMember() throws Exception {
+        var members = mock(MemberRepository.class);
+        new DevMemberDataInitializer().seedDevelopmentMembers(members, "W123ABC").run(null);
+        var captor = org.mockito.ArgumentCaptor.forClass(Member.class);
+        verify(members, times(4)).save(captor.capture());
+        assertThat(captor.getAllValues().getLast().getSlackUserId()).isEqualTo("W123ABC");
     }
 
     // 모델에게 보이는 도구 설명과 이름 파라미터 모두 직급·조사 추출 책임을 명시한다.
