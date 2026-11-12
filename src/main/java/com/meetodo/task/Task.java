@@ -34,7 +34,7 @@ public class Task {
     @JoinColumn(name = "assignee_id")
     private Member assignee;
 
-    @jakarta.persistence.Lob
+    @Column(columnDefinition = "text")
     @jakarta.persistence.Convert(converter = UnresolvedAssignee.JsonConverter.class)
     private UnresolvedAssignee unresolvedAssignee;
 

@@ -1,0 +1,11 @@
+# Allowlist build inputs so local databases, credentials and agent files never enter the context.
+**
+!Dockerfile
+!gradlew
+!build.gradle
+!settings.gradle
+!gradle/
+!gradle/**
+!src/
+!src/main/
+!src/main/**

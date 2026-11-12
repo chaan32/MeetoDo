@@ -1,7 +1,7 @@
 spring:
   config:
     activate:
-      on-profile: "local & openai & !test"
+      on-profile: "(local | docker) & openai & !test"
   ai:
     retry:
       # A connectivity check makes one attempt so failures are visible promptly.

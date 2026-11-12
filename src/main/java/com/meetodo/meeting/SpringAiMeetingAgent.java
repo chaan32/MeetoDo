@@ -25,7 +25,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
-@Profile("local & openai & !test")
+@Profile("(local | docker) & openai & !test")
 public class SpringAiMeetingAgent implements MeetingAgent {
 
     public static final int MAX_TOOL_CALLS = 20;

@@ -2,7 +2,7 @@
 
 회의록에서 할 일을 추출해 담당자·마감일과 함께 등록하고 Slack으로 알리는 백엔드 프로젝트입니다. 별도 프론트엔드 없이 Swagger로 입력하고 Slack으로 결과를 받는 서비스를 목표로 합니다.
 
-Task API·회의 처리 에이전트·Slack/Discord 완료 알림·평일 마감 다이제스트를 구현했습니다. OpenAI 연결과 완료 알림의 실제 채널 표시는 사용자가 확인했습니다. 5단계 실제 채널 확인은 별도입니다.
+Task API·회의 처리 에이전트·Slack/Discord 완료 알림·평일 마감 다이제스트를 구현했습니다. OpenAI 연결과 완료 알림의 실제 채널 표시는 사용자가 확인했습니다. 5단계 SENT·ALREADY_SENT·force 재전송도 사용자가 실제 Slack에서 확인했습니다.
 
 ## 실행
 
@@ -35,7 +35,7 @@ java -jar build/libs/meetodo-0.0.1-SNAPSHOT.jar
 | `gradlew`, `gradle/wrapper/` | Gradle 8.14.3으로 빌드 버전 통일 |
 | `application.yml` | 앱 이름, 기본 프로필, AI 모델 기본 비활성화, health 노출 |
 | `application-local.yml` | 로컬 H2 파일 DB와 개발용 스키마 갱신. local 프로필에서만 가짜 팀원 seed 실행 |
-| `application-openai.yml` | `local & openai & !test`일 때만 OpenAI Chat 활성화. 단일 시도 및 민감한 원문을 출력하는 로거 비활성화 |
+| `application-openai.yml` | `(local | docker) & openai & !test`일 때만 OpenAI Chat 활성화. 단일 시도 및 민감한 원문을 출력하는 로거 비활성화 |
 | `application-test.yml` | 실제 로컬 데이터와 분리된 H2 메모리 DB |
 | `.env.example` | 필요한 환경변수 이름 안내. 자동으로 로드되는 설정 파일은 아님 |
 | `.gitignore` | 비밀값, 로컬 DB, 빌드 결과 제외 |
@@ -107,7 +107,7 @@ TaskMention은 기존 개발 데이터에 대해 백필하지 않습니다. 로�
 
 ## 다음 단계
 
-Slack/Discord 완료 알림의 사용자 실제 확인과 평일 마감 워크플로 구현을 마쳤습니다. 마감 다이제스트의 실제 채널 확인 후 Docker Compose·PostgreSQL 단계로 진행합니다. 회의 처리 시간·LLM 호출 횟수·도구별 시간·검증 실패 비율은 실제로 수집하고 개선 전 기준값을 먼저 확보합니다.
+Slack/Discord 완료 알림의 사용자 실제 확인과 평일 마감 워크플로 구현을 마쳤습니다. 마감 다이제스트의 실제 Slack 확인과 Docker Compose·PostgreSQL 전환을 마쳤으며, 다음은 Kubernetes 다중 인스턴스 검증입니다. 회의 처리 시간·LLM 호출 횟수·도구별 시간·검증 실패 비율은 실제로 수집하고 개선 전 기준값을 먼저 확보합니다.
 
 ## 버전 근거
 
@@ -176,7 +176,7 @@ A 적용 후 실측은 이번 회의록 팀 대조·표기 정규화·단일 후
 
 Notifier 인터페이스로 설계해서 두레이 같은 사내 메신저도 구현체 추가로 연결할 수 있다. 두레이는 이번에 구현하지 않았다. Slack 생성 장애로 Discord를 먼저 검증했고, 이후 사용자가 설정만 바꿔 Slack에서도 실제 완료 알림과 상세 경고를 확인했다. 최종 데모는 Slack을 사용한다.
 
-- 실제 전송: local & !test + NOTIFIER_TYPE(slack/discord) + 해당 URL 환경변수가 있어야 한다. 5단계부터 OpenAI 없는 다이제스트를 위해 메신저 빈에서 openai 조건을 분리했다. URL/타입 미설정과 test 프로필에서는 실제 전송하지 않는다. OpenAI 빈 자체의 local & openai & !test 조건은 유지한다.
+- 실제 전송: (local | docker) & !test + NOTIFIER_TYPE(slack/discord) + 해당 URL 환경변수가 있어야 한다. 5단계부터 OpenAI 없는 다이제스트를 위해 메신저 빈에서 openai 조건을 분리했다. URL/타입 미설정과 test 프로필에서는 실제 전송하지 않는다. OpenAI 빈은 (local | docker) & openai & !test에서만 생성하며 기존 local/test 동작은 유지한다.
 - notificationStatus: PENDING / SENT / FAILED / SKIPPED. notificationType, notificationErrorCode, notifiedAt도 조회 응답에 제공한다. notifiedAt은 공급자 성공 응답 시각이며 사람이 읽었다는 뜻은 아니다.
 - URL이나 활성화 조건이 없으면 SKIPPED / NOT_CONFIGURED. 과거 데이터의 알림 상태가 null이면 SKIPPED / NOT_ATTEMPTED로 표시하며 과거 회의를 자동 전송하지 않는다.
 - 동일 본문 재전송은 기존 결과와 기존 알림 상태를 반환하며 추가 전송하지 않는다. 같은 Task 묶음인 새 Meeting은 원본 ID와 건수를 짧게 알린다. Meeting FAILED는 일반화된 짧은 실패 알림을 보낸다.
@@ -253,4 +253,61 @@ LLM을 사용하지 않는다. TODO 상태와 날짜 구간을 정해진 규칙�
 
 [5단계 확인 문서](fifthStepDone.md)에 데모 데이터·실행 요청·Slack 예상 모습·변경 파일·면접 질문을 정리했다.
 
-5단계 검증: `./gradlew test bootJar --no-daemon` 성공, 전체 **279개 / 실패·오류·건너뜀 0**. 실제 외부 채널과 평일9시 예약 실행은 사용자 확인 단계다.
+5단계 검증: `./gradlew test bootJar --no-daemon` 성공, 전체 **279개 / 실패·오류·건너뜀 0**. 사용자가 이후 실제 Slack에서 첫 SENT·재실행 ALREADY_SENT·force SENT를 확인했다. 평일9시 자동 실행은 별도 확인이다.
+
+
+## Docker Compose + PostgreSQL — 7단계
+
+사용자가 보고한 전날 H2 파일 잠금 문제는 로컬 파일 DB를 여러 프로세스가 함께 열려 할 때의 제약과 연결된다. 이번 작업에서 그 과거 오류를 다시 재현하거나 정확한 예외·발생 횟수를 확인한 것은 아니다. 다중 앱이 같은 데이터를 쓰려면 서버형 DB가 필요하므로 docker 프로필에서는 PostgreSQL 16을 사용한다. local H2 파일·test H2 메모리 및 기존 ddl-auto 정책은 유지한다. H2 데이터를 PostgreSQL로 자동 복사하지 않는다.
+
+- docker: Flyway V1 초기 스키마 적용 후 Hibernate ddl-auto=validate. local/test: Flyway 비활성.
+- V1은 현재 6개 테이블·6개 외래 키와 회의 해시/TaskMention(task_id,meeting_id)/DailyDigest.digest_date 유니크 제약·로그 조회 인덱스를 포함한다. 샘플 데이터는 마이그레이션에 넣지 않는다.
+- PostgreSQL의 JSON 스냅샷은 일반 text다. 실제 PostgreSQL 테스트에서 기존 @Lob/OID가 autocommit 조회 오류를 내는 것을 확인한 뒤 수정했다.
+- 멀티 스테이지 Dockerfile은 Gradle Wrapper로 bootJar를 만들고 JRE21에 JAR만 복사한다. 테스트는 호스트에서 별도로 돌린다. 런타임 UID/GID 10001, /actuator/health 헬스체크.
+- Compose는 PostgreSQL이 healthy일 때 앱을 시작하며 DB는 named volume에 보존한다. app은 localhost:8080, replica 프로필의 app2는 localhost:8081이다. 포트는 APP_PORT/APP2_PORT로 변경 가능하다. DB 포트는 호스트에 공개하지 않는다.
+- .dockerignore는 빌드 입력 허용 목록이라 .env·data·에이전트 설정·Git 등이 이미지 컨텍스트에 들어가지 않는다. DB 암호·OpenAI 키·웹훅 URL은 환경변수로만 전달하며 저장소에는 빈 .env.example만 둔다. .env는 gitignore 대상이다.
+- Docker 기본은 키 없는 Task·다이제스트다. OpenAI 회의 처리는 SPRING_PROFILES_ACTIVE=docker,openai를 명시한다. docker에 local을 함께 켜지 않는다. local용 llm-ping은 Docker에 노출하지 않는다.
+- Docker의 POST /api/dev/digest/run은 MEETODO_DEV_ENDPOINTS_ENABLED=true일 때만 노출한다(기본 false). Notifier는 docker에서도 활성화할 수 있지만 test가 함께 있으면 실제 전송 빈을 만들지 않는다. 스케줄 기본 비활성은 그대로다.
+
+### 실행 명령
+
+Docker Desktop 실행 후 DB 암호를 준비한다. 기존 볼륨이 있다면 최초 사용한 암호를 유지한다. 키체인에 처음 저장할 때만 아래 add 명령을 사용한다(기존 항목을 덮어쓰지 않는다).
+
+```zsh
+security add-generic-password -a "$USER" -s meetodo-postgres -w "$(openssl rand -hex 24)"
+export POSTGRES_PASSWORD="$(security find-generic-password -a "$USER" -s meetodo-postgres -w)"
+export OPENAI_API_KEY="$(security find-generic-password -a "$USER" -s meetodo-openai -w)"
+# SLACK_WEBHOOK_URL은 이미 실제 확인한 환경변수 값을 유지한다.
+export NOTIFIER_TYPE=slack
+export MEETODO_DEV_ENDPOINTS_ENABLED=true
+export MEETODO_DIGEST_ENABLED=false
+export SPRING_PROFILES_ACTIVE=docker
+
+docker compose build app
+docker compose up -d --wait
+docker compose ps
+docker compose logs -f app
+```
+
+둘째 앱: `docker compose --profile replica up -d --wait`. Swagger는 http://localhost:8080/swagger-ui/index.html 및 http://localhost:8081/swagger-ui/index.html 이다. port 충돌이면 APP_PORT/APP2_PORT를 바꾼다.
+
+Docker에는 개발 팀원이 자동 생성되지 않는다. 필요할 때 명시적으로:
+
+```zsh
+docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < scripts/docker-demo-members.sql
+```
+
+회의 처리도 확인하려면:
+
+```zsh
+export SPRING_PROFILES_ACTIVE=docker,openai
+docker compose --profile replica up -d --wait
+```
+
+종료는 `docker compose --profile replica down`(데이터 유지). **DB 초기화는 사용자가 필요할 때만** `docker compose --profile replica down -v`로 한다(해당 프로젝트 DB 데이터 삭제). H2 data/와 PostgreSQL 볼륨은 별개다. POSTGRES_PASSWORD 환경변수를 바꾸는 것만으로 기존 DB 암호가 변경되지는 않는다.
+
+전체 테스트는 Docker Desktop이 켜진 상태에서 `./gradlew test bootJar --no-daemon`. PostgreSQL Testcontainers 테스트는 Docker가 없을 때 조용히 건너뛰지 않고 실패한다. 실제 외부 OpenAI·메신저는 테스트에서 호출하지 않는다.
+
+[fifthStepDone.md](fifthStepDone.md)의 실제 Slack 날짜 선점 검증에 이어 [seventhStepDone.md](seventhStepDone.md)에 이미지·마이그레이션·동시 앱 검증과 두 인스턴스 요청 명령을 정리했다.
+
+7단계 실제 검증: 전체 **301개 / 실패·오류·건너뜀0**, 실제 PostgreSQL Testcontainers13개와 Docker프로필9개 포함. 이미지 build·두앱 healthy/non-root·로컬mock 동시발송1회·컨테이너 재생성 뒤 데이터 보존 확인. 외부 메신저/OpenAI 호출 및 사용자 DB 삭제는 하지 않았다.

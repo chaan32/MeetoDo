@@ -442,3 +442,34 @@ E 백엔드팀 지영 1~3회는 findMember → findTasks → createTask, 지영 
 알려진 한계: 선점 후 종료는 PENDING을 남길 수 있고, 외부 전송 성공 후 상태 저장 실패도 전달 여부가 불명확하다. 정확히 한 번 전달은 보장하지 않으며 향후 Outbox/재처리 정책으로 개선 가능하다. 날짜 선점은 같은 DB를 공유해야 유효하고 현재 H2 파일 DB를 여러 서버가 공유하는 배포는 지원하지 않는다. 이번 동시 검증은 같은 H2 DB의 두 스레드이며 실제 다중 인스턴스/PostgreSQL 검증은 다음 배포 단계다. force 동시 실행은 중복을 허용한다. 지금 실제 Notifier는 local & !test이므로 배포 프로필 조건도 배포 단계에서 정한다.
 
 근거: [Spring Framework 6.2 스케줄 공식 문서](https://docs.spring.io/spring-framework/reference/6.2/integration/scheduling.html), [REQUIRES_NEW 공식 문서](https://docs.spring.io/spring-framework/reference/6.2/data-access/transaction/declarative/tx-propagation.html). 실제 캐시된 spring-context-6.2.19-sources.jar의 Scheduled.cron/zone과 CronExpression의 6필드·MON-FRI 지원도 확인했다. Slack/Discord 전송 API는 변경하지 않고 기존 변환·전송을 재사용했다.
+
+
+## 2026-11-12 — 5단계 실제 Slack 확인
+- 증상: 자동 테스트 후 실제 채널에서 날짜 선점과 강제 재전송 정책 확인이 남아 있었다.
+- 가설: 같은 날짜 일반 실행은 DB 기록으로 한 번만 발송하고 개발용 force=true만 재전송한다.
+- 확인: 사용자가 Slack에서 첫 실행 SENT, 같은 날 재실행 ALREADY_SENT(추가 메시지 없음), force=true 재전송 SENT를 직접 확인했다.
+- 원인: 일반 실행의 날짜 유니크 선점과 개발용 강제 실행 경로가 분리돼 있다.
+- 해결 → 결과: 사용자 실제 실행에서 세 시나리오가 기대대로 동작했다. 이번 작업에서 해당 채널을 직접 읽거나 실제 알림을 추가 전송하지 않았다.
+
+## 2026-11-12 — PostgreSQL 전환 중 JSON @Lob 조회 오류
+- 증상: 실제 PostgreSQL Testcontainers에서 스키마 검증은 통과했지만 미정 담당자 JSON을 다이제스트 조회로 읽을 때 Large Objects may not be used in auto-commit mode가 발생했다. 테스트 13개 중 12개 통과/1개 실패였다.
+- 가설: 기존 @Lob 문자열 매핑이 PostgreSQL OID 대형 객체로 저장돼 일반 조회의 autocommit 모드와 충돌한다.
+- 확인: 미정 정보 저장 트랜잭션 커밋 후 실제 findDigestTasks 조회가 JpaSystemException → PSQLException으로 실패했다. [PostgreSQL JDBC 문서](https://jdbc.postgresql.org/documentation/binary-data/)도 Large Object API의 트랜잭션 요구를 설명한다.
+- 원인: 작은 JSON 스냅샷에 대형 객체 매핑을 사용했다. H2에서 통과한 매핑이 PostgreSQL의 OID 의미와 같지 않았다.
+- 해결 → 결과: JSON 변환기는 유지하고 @Lob를 일반 text 컬럼으로 바꿨다. 새 PostgreSQL V1도 text로 정의했고 PostgreSQL 검증 13개가 모두 통과했다. 기존 H2 회귀를 포함한 전체 결과는 최종 검증 후 아래에 기록한다. 기존 PostgreSQL OID 데이터 변환은 대상이 아니며 이번 PostgreSQL DB는 새로 시작한다.
+
+
+## 2026-11-12 — Docker Compose + PostgreSQL·Flyway
+- 증상: 사용자가 전날 H2 파일 잠금 문제를 겪었다고 보고했고 여러 앱이 같은 DB로 다이제스트 날짜 선점을 공유할 실행 환경이 필요했다. 과거 H2 오류의 정확한 예외·횟수는 이번에 재확인하거나 재현하지 않았다.
+- 가설: 서버형 PostgreSQL을 공유하고 Flyway로 스키마를 버전 관리하면 파일 DB 공유 제약을 피하면서 다중 앱이 같은 유니크 제약으로 선점할 수 있다.
+- 확인: 실제 PostgreSQL Testcontainers에서 V1 누락으로 Hibernate validate 실패를 먼저 확인했다. V1은 현재6개 테이블,6개FK,회의해시·TaskMention·DailyDigest 고유 제약을 포함한다. SQL 제약과 JSON 읽기/쓰기·동시 다이제스트를 검증했다. Docker 데모 조건도 수정 전2개 실패로 확인했다.
+- 원인: H2 파일을 여러 서버에서 공유하는 방식은 현재 구성에 맞지 않고, H2 통과만으로 PostgreSQL의 타입·제약·트랜잭션 동작을 보장할 수 없다. 파일 잠금의 배경 설명과 실제 PostgreSQL 테스트에서 새로 발견한 OID 문제를 구분한다.
+- 해결 → 결과: docker 프로필 PostgreSQL/Flyway+validate, 멀티 스테이지 JRE21 non-root 이미지, DB health 이후 시작하는 Compose 앱2개와 볼륨을 구현했다. 전체301개 테스트 실패·오류·건너뜀0, `./gradlew test bootJar --no-daemon` 성공. 실제 이미지 build, 두 앱 UID/GID10001:10001 및 healthy, 동시 요청 SENT/ALREADY_SENT 각1개와 로컬 mock 수신1회를 확인했다. 앱2에서 앱1Task 조회, DB 컨테이너 재생성 뒤 Task1건/SENT 기록 보존도 확인했다. 외부 OpenAI·Slack은 호출하지 않았다.
+
+검증 환경: 사용자 DB와 다른 meetodo-verification Compose 프로젝트·더미 비밀값·로컬 mock 웹훅을 사용했다. 검증 컨테이너는 종료했고 named volume은 남겼다. 사용자 H2 data/·기존 DB 볼륨은 삭제하지 않았다. Docker Desktop이 처음 꺼져 있어 시작한 환경 준비는 서비스 버그와 구분한다.
+
+보안·활성화: 비밀값은 환경변수로만 전달하고 .env는 gitignore, Docker 빌드 컨텍스트는 입력 허용 목록이다. 기본docker에서OpenAI는비활성이고 docker,openai를명시할때만활성화한다. 기존local/test동작을유지한다. Notifier는(local|docker)&!test에서설정이있을때만생성한다. Docker개발용digestAPI는MEETODO_DEV_ENDPOINTS_ENABLED 기본false이며 true를명시할때만노출한다. local용llm-ping은Docker에노출하지않는다.
+
+한계: H2→PostgreSQL 기존 데이터 복사, 기존 PG OID→text 데이터 변환, Kubernetes 배포, Task 동시 등록 경쟁 해결, Outbox·정확히 한 번 전달은 이번 범위가 아니다. V1 적용 후 스키마 변경은 V2 이후로 추가한다. Docker named volume 초기화는 사용자 명령으로만 안내한다. PostgreSQL Testcontainers는 Docker가 없을 때 조용히 건너뛰지 않고 실패한다.
+
+공식 근거: [Compose 시작 순서/health 조건](https://docs.docker.com/compose/how-tos/startup-order/), [Testcontainers PostgreSQL](https://java.testcontainers.org/modules/databases/postgres/), [Flyway PostgreSQL 모듈](https://documentation.red-gate.com/flyway/reference/database-driver-reference/postgresql-database). 실제 Spring Boot3.5.16 BOM의 Flyway11.7.2/Testcontainers1.21.4를 사용했고 TC1.21.4 PostgreSQLContainer 소스의 생성자·접속정보 API도 확인했다.

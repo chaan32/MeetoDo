@@ -1,0 +1,48 @@
+x-app: &app
+  build: .
+  image: meetodo:local
+  environment:
+    SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-docker}
+    DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-meetodo}
+    DB_USERNAME: ${POSTGRES_USER:-meetodo}
+    DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your environment or ignored .env}
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4o-mini}
+    NOTIFIER_TYPE: ${NOTIFIER_TYPE:-}
+    SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+    MEETODO_DEV_ENDPOINTS_ENABLED: ${MEETODO_DEV_ENDPOINTS_ENABLED:-false}
+    MEETODO_DIGEST_ENABLED: ${MEETODO_DIGEST_ENABLED:-false}
+    MEETODO_DIGEST_CRON: ${MEETODO_DIGEST_CRON:-0 0 9 * * MON-FRI}
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-meetodo}
+      POSTGRES_USER: ${POSTGRES_USER:-meetodo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your environment or ignored .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  app:
+    <<: *app
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+
+  app2:
+    <<: *app
+    profiles: [replica]
+    ports:
+      - "127.0.0.1:${APP2_PORT:-8081}:8080"
+
+volumes:
+  postgres_data:

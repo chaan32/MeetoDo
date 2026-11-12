@@ -1,6 +1,8 @@
 package com.meetodo.digest;
 
 import java.time.LocalDate;
+import com.meetodo.config.DevEndpointsCondition;
+import org.springframework.context.annotation.Conditional;
 import java.util.Map;
 import org.springframework.context.annotation.Profile;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -9,7 +11,8 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestController
-@Profile("local")
+@Profile("local | docker")
+@Conditional(DevEndpointsCondition.class)
 @RequestMapping("/api/dev/digest")
 public class DailyDigestController {
     private final DailyDigestService service;

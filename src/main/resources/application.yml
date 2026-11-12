@@ -3,6 +3,8 @@ spring:
     name: meetodo
   profiles:
     default: local
+  flyway:
+    enabled: false
   jpa:
     open-in-view: false
   ai:

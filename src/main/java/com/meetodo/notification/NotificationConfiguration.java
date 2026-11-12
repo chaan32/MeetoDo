@@ -13,7 +13,7 @@ import org.springframework.core.type.AnnotatedTypeMetadata;
 import org.springframework.util.StringUtils;
 
 @Configuration(proxyBeanMethods = false)
-@Profile("local & !test")
+@Profile("(local | docker) & !test")
 public class NotificationConfiguration {
     @Bean
     @Conditional(WebhookConfigured.class)
