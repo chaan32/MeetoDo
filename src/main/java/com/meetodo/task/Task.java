@@ -34,6 +34,10 @@ public class Task {
     @JoinColumn(name = "assignee_id")
     private Member assignee;
 
+    @jakarta.persistence.Lob
+    @jakarta.persistence.Convert(converter = UnresolvedAssignee.JsonConverter.class)
+    private UnresolvedAssignee unresolvedAssignee;
+
     @Column(name = "due_date")
     private LocalDate dueDate;
 
@@ -67,6 +71,14 @@ public class Task {
         task.meeting = meeting;
         return task;
     }
+
+    public static Task create(String title, Member assignee, LocalDate dueDate, Meeting meeting, UnresolvedAssignee unresolved) {
+        Task task = create(title, assignee, dueDate, meeting);
+        task.unresolvedAssignee = assignee == null ? unresolved : null;
+        return task;
+    }
+
+    public UnresolvedAssignee getUnresolvedAssignee() { return unresolvedAssignee; }
 
     @PrePersist
     void setCreatedAt() {

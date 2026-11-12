@@ -200,3 +200,16 @@ export OPENAI_CHAT_MODEL=gpt-4o-mini
 
 
 4단계 자동 검증: 전체 182개 테스트, 실패·오류·건너뜀 0 및 bootJar 성공. 실제 Slack·Discord 서비스 통합 전송은 사용자가 확인한다. 작업 중 발견한 ToolCallLog 웹훅 URL 마스킹 누락과 단일 메시지 잘림 경계 수정은 DEVLOG에 기록했다.
+
+
+### 미정 담당자 상세 정보 — 단계 D
+
+4단계 Discord 실제 채널 알림은 사용자가 확인했다. 미정 담당자의 이름·요청 팀·후보(id, 이름, 팀)를 `unresolvedAssignee` 스냅샷으로 Task에 저장하며 GET /api/tasks, 회의 응답 tasks와 알림 경고에 제공한다. 데이터 근거는 현재 회의의 findMember 도구 기록이다. createTask는 모델이 다시 적은 이름 대신 findMember 결과의 `lookupCallOrder`를 전달받아 현재 회의·도구·사유를 검증한다. AMBIGUOUS/NOT_FOUND/TEAM_MISMATCH에 필요하고 NONE에는 필요 없다.
+
+Task를 재사용할 때 최초 스냅샷을 덮어쓰지 않는다. 재사용 회의의 응답·알림은 그 회의의 조회 근거를 보여준다. 기존 데이터는 백필하지 않으며 상세 정보가 없으면 기존 경고만 표시한다. 현재 PATCH /api/tasks/{id}는 상태만 변경한다. 향후 담당자 배정 API를 추가할 때 배정과 동시에 현재 미정 정보와 경고를 비우고 과거 도구 기록은 보존할 예정이다.
+
+이름·팀은 최대 100자, 후보는 최대 20명과 생략 건수로 제한한다. 비밀값 마스킹과 제어문자 정리를 적용하며 Discord allowed_mentions 비활성화, Slack 일반 텍스트와 최종 길이 제한을 유지한다. 실제 멘션 기능은 보류한다.
+
+알려진 한계: **findMember에 전달된 이름 자체는 모델이 추출한 값**이다. 서버 조회 기록은 모델이 원문에서 이름을 정확히 추출했음을 보장하지 않는다. 서로 다른 미정 인물도 같은 제목의 TODO이면 기존 중복 정책으로 합쳐질 수 있다. D의 호출 수·시간 효과는 아직 측정하지 않았으며 DEVLOG의 D 칸은 사용자가 measure.sh 실측 후 채운다. findTasks 정책 변경 B는 보류한다.
+
+조회 로그가 기존 4,000자 제한으로 잘려 근거 JSON을 읽을 수 없으면 등록을 추측하지 않고 참조 오류로 거절한다. 상세 경고가 길어 알림 길이 제한을 넘으면 기존 단일 메시지 정책대로 접두 목록과 생략 안내만 보낸다. 전체 218개 자동 테스트와 bootJar가 통과했으며, 실제 D 모델 실행·채널 확인·성능 실측은 별도다. [unassignedDetailStepDDone.md](unassignedDetailStepDDone.md)에 확인 절차를 정리했다.

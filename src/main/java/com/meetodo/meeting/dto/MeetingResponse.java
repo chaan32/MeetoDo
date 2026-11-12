@@ -8,6 +8,7 @@ import java.util.Map;
 import com.meetodo.meeting.Meeting;
 import com.meetodo.meeting.MeetingStatus;
 import com.meetodo.task.Task;
+import com.meetodo.task.UnresolvedAssignee;
 
 public record MeetingResponse(Long meetingId, Long duplicateOfMeetingId, MeetingStatus status, String summary,
                               List<MeetingTaskResponse> tasks, int unassignedCount,
@@ -21,9 +22,16 @@ public record MeetingResponse(Long meetingId, Long duplicateOfMeetingId, Meeting
 
     public static MeetingResponse from(Meeting meeting, List<Task> tasks, Map<Long, String> resultTypes,
                                        Map<Long, Long> mentionCounts, Map<Long, String> warnings, Map<Long, String> reasons) {
+        return from(meeting, tasks, resultTypes, mentionCounts, warnings, reasons, Map.of());
+    }
+
+    public static MeetingResponse from(Meeting meeting, List<Task> tasks, Map<Long, String> resultTypes,
+                                       Map<Long, Long> mentionCounts, Map<Long, String> warnings, Map<Long, String> reasons,
+                                       Map<Long, UnresolvedAssignee> details) {
         List<MeetingTaskResponse> items = tasks.stream()
                 .map(task -> MeetingTaskResponse.from(task, resultTypes.getOrDefault(task.getId(), "CREATED"),
-                        mentionCounts.getOrDefault(task.getId(), 0L), warnings.get(task.getId()), reasons.get(task.getId())))
+                        mentionCounts.getOrDefault(task.getId(), 0L), warnings.get(task.getId()), reasons.get(task.getId()),
+                        details.containsKey(task.getId()) ? details.get(task.getId()) : task.getUnresolvedAssignee()))
                 .toList();
         int unassigned = (int) tasks.stream().filter(task -> task.getAssignee() == null).count();
         return new MeetingResponse(meeting.getId(), meeting.getDuplicateOfMeetingId(), meeting.getStatus(),

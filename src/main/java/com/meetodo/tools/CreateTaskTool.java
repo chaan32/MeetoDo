@@ -12,6 +12,7 @@ import com.meetodo.member.Member;
 import com.meetodo.member.MemberRepository;
 import com.meetodo.meeting.Meeting;
 import com.meetodo.task.TaskService;
+import com.meetodo.task.UnresolvedAssignee;
 import com.meetodo.task.TaskMentionService;
 import com.meetodo.task.dto.TaskResponse;
 import org.springframework.ai.chat.model.ToolContext;
@@ -43,21 +44,29 @@ public class CreateTaskTool {
     }
 
     public ToolResult createTask(String title, String assignee, String dueDate, Meeting meeting) {
-        return execution.execute(meeting, "createTask", Map.of(
-                "title", title == null ? "" : title,
-                "assignee", assignee == null ? "" : assignee,
-                "dueDate", dueDate == null ? "" : dueDate), () -> createValidated(title, assignee, dueDate, meeting));
+        return createTask(title, assignee, dueDate, null, meeting);
     }
 
-    @Tool(name = "createTask", description = "할 일을 등록한다. assignee는 findMember 후보의 member:<id> 또는 unassigned:AMBIGUOUS / unassigned:NOT_FOUND / unassigned:TEAM_MISMATCH / unassigned:NONE 중 하나다. 서버가 TODO 중복을 재검사하여 CREATED/EXISTING을 반환한다.")
+    public ToolResult createTask(String title, String assignee, String dueDate, Integer lookupCallOrder, Meeting meeting) {
+        Map<String, Object> arguments = new java.util.LinkedHashMap<>();
+        arguments.put("lookupCallOrder", lookupCallOrder);
+        arguments.putAll(Map.of(
+                "title", title == null ? "" : title,
+                "assignee", assignee == null ? "" : assignee,
+                "dueDate", dueDate == null ? "" : dueDate));
+        return execution.execute(meeting, "createTask", arguments, () -> createValidated(title, assignee, dueDate, lookupCallOrder, meeting));
+    }
+
+    @Tool(name = "createTask", description = "할 일을 등록한다. assignee는 findMember 후보의 member:<id> 또는 unassigned:AMBIGUOUS / unassigned:NOT_FOUND / unassigned:TEAM_MISMATCH / unassigned:NONE 중 하나다. AMBIGUOUS/NOT_FOUND/TEAM_MISMATCH 미정은 해당 findMember 결과의 lookupCallOrder가 필수이며 NONE은 필요 없다. 서버가 TODO 중복을 재검사하여 CREATED/EXISTING을 반환한다.")
     public ToolResult invokeCreateTask(@ToolParam(description = "제목 1~200자") String title,
                                        @ToolParam(description = "배정 member:<id>, 동명이인 unassigned:AMBIGUOUS, 미등록 unassigned:NOT_FOUND, 팀 불일치 unassigned:TEAM_MISMATCH, 담당자 언급 없음 unassigned:NONE") String assignee,
                                        @ToolParam(description = "마감일 yyyy-MM-dd. 없으면 빈 값") String dueDate,
+                                       @ToolParam(description = "미정 사유 AMBIGUOUS/NOT_FOUND/TEAM_MISMATCH를 확인한 findMember 결과의 lookupCallOrder. NONE이나 member 배정은 생략", required = false) Integer lookupCallOrder,
                                        ToolContext toolContext) {
-        return createTask(title, assignee, dueDate, execution.meetingFrom(toolContext));
+        return createTask(title, assignee, dueDate, lookupCallOrder, execution.meetingFrom(toolContext));
     }
 
-    private ToolResult createValidated(String title, String assignee, String dueDate, Meeting meeting) {
+    private ToolResult createValidated(String title, String assignee, String dueDate, Integer lookupCallOrder, Meeting meeting) {
         if (title == null || title.isBlank()) return ToolResult.error("INVALID_TITLE", "제목을 입력해야 합니다.");
         String normalizedTitle = title.trim();
         if (normalizedTitle.length() > MAX_TITLE_LENGTH)
@@ -106,8 +115,14 @@ public class CreateTaskTool {
         } else if ("unassigned:NONE".equals(assignee)) {
             reason = "NONE";
         } else return invalidAssignee();
+        UnresolvedAssignee unresolved = null;
+        if (!reason.isEmpty() && !"NONE".equals(reason)) {
+            unresolved = execution.unresolvedAssignee(meeting, lookupCallOrder, reason);
+            if (unresolved == null) return ToolResult.error("INVALID_LOOKUP_REFERENCE", "findMember 결과에 있는 lookupCallOrder 값을 그대로 넣으세요");
+            warning = unresolved.warning();
+        }
         TaskService.ToolTaskResult creation = taskService.createFromToolIdempotently(
-                normalizedTitle, member, parsedDueDate, meeting);
+                normalizedTitle, member, parsedDueDate, meeting, unresolved);
         TaskResponse created = creation.task();
         if (created.id() != null && meeting.getId() != null)
             mentions.record(created.id(), meeting.getId());
@@ -122,6 +137,7 @@ public class CreateTaskTool {
             response.put("resultType", creation.created() ? "CREATED" : "EXISTING");
             response.put("warning", warning);
             response.put("unassignedReason", reason);
+            response.put("unresolvedAssignee", unresolved);
             String message = pastDateFallback
                     ? "입력된 마감일이 과거라 마감일 없이 등록했습니다. 최종 답변에서 사용자에게 경고하세요."
                     : creation.created() ? "할 일을 등록했습니다. (CREATED)"

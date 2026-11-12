@@ -63,11 +63,15 @@ class MeetingAgentApiIntegrationTests {
     @Autowired MemberRepository members;
     @MockitoBean ChatModel model;
 
+    int fixtureCallOrder;
+    int fixtureLastLookup;
     final java.util.Set<String> fixtureLookups = new java.util.HashSet<>();
 
     @BeforeEach
     void cleanAndSeed() {
         fixtureLookups.clear();
+        fixtureCallOrder = 0;
+        fixtureLastLookup = 0;
         logs.deleteAll();
         mentions.deleteAll();
         tasks.deleteAll();
@@ -327,7 +331,7 @@ class MeetingAgentApiIntegrationTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.unassignedCount").value(1))
                 .andExpect(jsonPath("$.tasks[0].assigneeName").doesNotExist())
-                .andExpect(jsonPath("$.tasks[0].warning").value("동명이인 확인 필요"));
+                .andExpect(jsonPath("$.tasks[0].warning").value(org.hamcrest.Matchers.startsWith("동명이인 확인 필요")));
     }
 
     // 검증: findMember 후보가 아닌 다른 팀원의 ID로 등록하려 하면 도구가 거절하고 Task를 저장하지 않는다.
@@ -455,7 +459,7 @@ class MeetingAgentApiIntegrationTests {
         when(model.call(any(org.springframework.ai.chat.prompt.Prompt.class))).thenReturn(responses[0], java.util.Arrays.copyOfRange(responses, 1, responses.length));
         submitStageA("지영은 API를 수정한다.")
                 .andExpect(jsonPath("$.tasks[0].unassignedReason").value("AMBIGUOUS"))
-                .andExpect(jsonPath("$.tasks[0].warning").value("동명이인 확인 필요"));
+                .andExpect(jsonPath("$.tasks[0].warning").value(org.hamcrest.Matchers.startsWith("동명이인 확인 필요")));
     }
 
     // 검증: 등록되지 않은 이름은 NOT_FOUND 사유와 지정된 경고를 응답한다.
@@ -467,7 +471,7 @@ class MeetingAgentApiIntegrationTests {
         when(model.call(any(org.springframework.ai.chat.prompt.Prompt.class))).thenReturn(responses[0], java.util.Arrays.copyOfRange(responses, 1, responses.length));
         submitStageA("없는 사람이 API 수정 담당")
                 .andExpect(jsonPath("$.tasks[0].unassignedReason").value("NOT_FOUND"))
-                .andExpect(jsonPath("$.tasks[0].warning").value("등록되지 않은 담당자"));
+                .andExpect(jsonPath("$.tasks[0].warning").value(org.hamcrest.Matchers.startsWith("등록되지 않은 담당자")));
     }
 
     // 검증: 담당자 언급이 없으면 NONE 사유로 등록하고 동명이인·미등록 경고를 붙이지 않는다.
@@ -507,7 +511,7 @@ class MeetingAgentApiIntegrationTests {
         submitStageA("지영 API 수정 재확인")
                 .andExpect(jsonPath("$.tasks[0].resultType").value("EXISTING"))
                 .andExpect(jsonPath("$.tasks[0].unassignedReason").value("AMBIGUOUS"))
-                .andExpect(jsonPath("$.tasks[0].warning").value("동명이인 확인 필요"));
+                .andExpect(jsonPath("$.tasks[0].warning").value(org.hamcrest.Matchers.startsWith("동명이인 확인 필요")));
     }
 
     // 검증: 실제 호출 순서인 팀 불일치→빈 팀 조회→member ID 배정으로 오배정하지 않는다.
@@ -538,11 +542,11 @@ class MeetingAgentApiIntegrationTests {
         String body = submitStageA("프론트엔드팀 해찬은 API 수정 담당")
                 .andExpect(jsonPath("$.tasks[0].assigneeName").doesNotExist())
                 .andExpect(jsonPath("$.tasks[0].unassignedReason").value("TEAM_MISMATCH"))
-                .andExpect(jsonPath("$.tasks[0].warning").value("팀 불일치 확인 필요"))
+                .andExpect(jsonPath("$.tasks[0].warning").value(org.hamcrest.Matchers.startsWith("팀 불일치 확인 필요")))
                 .andReturn().getResponse().getContentAsString();
         long id = new ObjectMapper().readTree(body).path("meetingId").asLong();
         mvc.perform(get("/api/meetings/{id}", id))
-                .andExpect(jsonPath("$.tasks[0].warning").value("팀 불일치 확인 필요"));
+                .andExpect(jsonPath("$.tasks[0].warning").value(org.hamcrest.Matchers.startsWith("팀 불일치 확인 필요")));
         var history = logs.findAllByMeetingIdOrderByCallOrderAsc(id);
         assertThat(history).anySatisfy(l -> assertThat(l.getErrorCode()).isEqualTo("INVALID_ASSIGNEE_TEAM"));
         ToolCallLog failed = history.getFirst();
@@ -684,9 +688,55 @@ class MeetingAgentApiIntegrationTests {
         return rawToolResponse("findTasks", "{\"assigneeId\":null,\"assigneeName\":\"\",\"title\":\"API 수정\"}");
     }
 
+    // 모델이 여분 이름을 다르게 보내도 조회 식별자의 서버 이름만 저장한다.
+    @Test
+    void ignoresFabricatedNameAndUsesReferencedFindMemberResult() throws Exception {
+        ChatResponse[] responses = {
+                rawToolResponse("findMember", "{\"name\":\"준호\"}"),
+                rawToolResponse("createTask", "{\"title\":\"문서 준비\",\"assignee\":\"unassigned:NOT_FOUND\",\"dueDate\":\"\",\"lookupCallOrder\":1,\"requestedAssigneeName\":\"조작된이름\"}"),
+                textResponse("완료")};
+        when(model.call(any(org.springframework.ai.chat.prompt.Prompt.class))).thenReturn(responses[0], java.util.Arrays.copyOfRange(responses, 1, responses.length));
+        submitStageA("준호는 문서를 준비한다.")
+                .andExpect(jsonPath("$.tasks[0].unresolvedAssignee.requestedAssigneeName").value("준호"))
+                .andExpect(jsonPath("$.tasks[0].warning").value("등록되지 않은 담당자: \"준호\""));
+        assertThat(tasks.findAll().getFirst().getUnresolvedAssignee().requestedAssigneeName()).isEqualTo("준호");
+    }
+
+    // 잘못된 참조는 저장하지 않고 구체적 안내 후 같은 조회의 올바른 번호로 재시도할 수 있다.
+    @Test
+    void rejectsWrongLookupReferenceThenAcceptsCorrectedReference() throws Exception {
+        ChatResponse[] responses = {
+                rawToolResponse("findMember", "{\"name\":\"준호\"}"),
+                rawToolResponse("createTask", "{\"title\":\"문서 준비\",\"assignee\":\"unassigned:NOT_FOUND\",\"dueDate\":\"\",\"lookupCallOrder\":99}"),
+                rawToolResponse("createTask", "{\"title\":\"문서 준비\",\"assignee\":\"unassigned:NOT_FOUND\",\"dueDate\":\"\",\"lookupCallOrder\":1}"),
+                textResponse("완료")};
+        when(model.call(any(org.springframework.ai.chat.prompt.Prompt.class))).thenReturn(responses[0], java.util.Arrays.copyOfRange(responses, 1, responses.length));
+        submitStageA("준호는 문서를 준비한다.")
+                .andExpect(jsonPath("$.tasks[0].unresolvedAssignee.requestedAssigneeName").value("준호"))
+                .andExpect(jsonPath("$.validationFailureCount").value(2));
+        assertThat(tasks.count()).isEqualTo(1);
+        assertThat(logs.findAll()).anySatisfy(log -> {
+            assertThat(log.getErrorCode()).isEqualTo("INVALID_LOOKUP_REFERENCE");
+            assertThat(log.getErrorMessage()).contains("findMember 결과에 있는 lookupCallOrder 값을 그대로 넣으세요");
+        });
+    }
+
+    // 여러 사람을 먼저 조회해도 마지막 조회가 아닌 지정한 조회의 인물 정보가 등록된다.
+    @Test
+    void referencesEarlierLookupInsteadOfGuessingLastLookup() throws Exception {
+        ChatResponse[] responses = {
+                rawToolResponse("findMember", "{\"name\":\"준호\"}"),
+                rawToolResponse("findMember", "{\"name\":\"수진\"}"),
+                rawToolResponse("createTask", "{\"title\":\"문서 준비\",\"assignee\":\"unassigned:NOT_FOUND\",\"dueDate\":\"\",\"lookupCallOrder\":1}"),
+                textResponse("완료")};
+        when(model.call(any(org.springframework.ai.chat.prompt.Prompt.class))).thenReturn(responses[0], java.util.Arrays.copyOfRange(responses, 1, responses.length));
+        submitStageA("준호는 문서를 준비하고 수진은 리뷰한다.")
+                .andExpect(jsonPath("$.tasks[0].unresolvedAssignee.requestedAssigneeName").value("준호"));
+    }
+
     private ChatResponse rawCreate(String assignee) throws Exception {
         return rawToolResponse("createTask", new ObjectMapper().writeValueAsString(java.util.Map.of(
-                "title", "API 수정", "assignee", assignee, "dueDate", "")));
+                "title", "API 수정", "assignee", assignee, "dueDate", "", "lookupCallOrder", 1)));
     }
 
     private org.springframework.test.web.servlet.ResultActions submitStageA(String text) throws Exception {
@@ -724,7 +774,10 @@ class MeetingAgentApiIntegrationTests {
             ObjectMapper mapper = new ObjectMapper();
             var object = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(arguments);
             var calls = new java.util.ArrayList<AssistantMessage.ToolCall>();
-            if (name.equals("findMember")) fixtureLookups.add(object.path("name").asText());
+            if (name.equals("findMember")) {
+                fixtureLookups.add(object.path("name").asText());
+                fixtureLastLookup = fixtureCallOrder + 1;
+            }
             if (name.equals("findTasks")) {
                 if (object.has("assignee")) {
                     object.put("assigneeName", object.path("assignee").asText());
@@ -750,9 +803,12 @@ class MeetingAgentApiIntegrationTests {
                     calls.add(new AssistantMessage.ToolCall("lookup", "function", "findMember",
                             mapper.writeValueAsString(java.util.Map.of("name", memberName))));
                 }
+                if (token.startsWith("unassigned:") && !token.equals("unassigned:NONE"))
+                    object.put("lookupCallOrder", fixtureLastLookup);
                 object.remove(java.util.List.of("assigneeId", "assigneeName", "unassignedBecauseAmbiguous"));
                 object.put("assignee", token);
             }
+            fixtureCallOrder += calls.size() + 1;
             calls.add(new AssistantMessage.ToolCall("call-" + name, "function", name, mapper.writeValueAsString(object)));
             return new ChatResponse(List.of(new Generation(AssistantMessage.builder().content("").toolCalls(calls).build())));
         } catch (Exception exception) { throw new IllegalArgumentException(exception); }

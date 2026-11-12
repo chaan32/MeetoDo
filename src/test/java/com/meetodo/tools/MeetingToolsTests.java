@@ -142,7 +142,9 @@ class MeetingToolsTests {
         when(tasks.save(any(Task.class))).thenAnswer(call -> call.getArgument(0));
 
         ToolResult assigned = createTask.createTask("회의 준비", "member:1", "2026-11-20", meeting);
-        ToolResult unknownAssignee = createTask.createTask("자료 취합", "unassigned:NOT_FOUND", null, meeting);
+        when(logs.findAllByMeetingIdOrderByCallOrderAsc(42L)).thenReturn(List.of(ToolCallLog.failure(meeting,
+                "findMember", "{\"name\":\"준호\"}", "{\"success\":false,\"errorCode\":\"MEMBER_NOT_FOUND\"}", "MEMBER_NOT_FOUND", "없음", 0, 2)));
+        ToolResult unknownAssignee = createTask.createTask("자료 취합", "unassigned:NOT_FOUND", null, 2, meeting);
 
         assertThat(assigned.success()).isTrue();
         assertThat(unknownAssignee.success()).isTrue();
@@ -196,10 +198,15 @@ class MeetingToolsTests {
 
     // 검증: 동명이인을 확정하지 못해 미정으로 등록하면 확인 필요 경고를 도구 결과에 남긴다.
     @Test
-    void registersUnassignedTaskWithAmbiguousMemberWarning() {
+    void registersUnassignedTaskWithAmbiguousMemberWarning() throws Exception {
         when(tasks.save(any(Task.class))).thenAnswer(call -> call.getArgument(0));
 
-        ToolResult result = createTask.createTask("회의실 예약", "unassigned:AMBIGUOUS", null, testMeeting);
+        var mapper = new ObjectMapper();
+        String data = mapper.writeValueAsString(List.of(Map.of("id", 2, "name", "지영", "team", "백엔드팀"),
+                Map.of("id", 3, "name", "지영", "team", "디자인팀")));
+        when(logs.findAllByMeetingIdOrderByCallOrderAsc(testMeeting.getId())).thenReturn(List.of(ToolCallLog.success(testMeeting,
+                "findMember", "{\"name\":\"지영\"}", mapper.writeValueAsString(ToolResult.success("AMBIGUOUS", data)), 0, 1)));
+        ToolResult result = createTask.createTask("회의실 예약", "unassigned:AMBIGUOUS", null, 1, testMeeting);
 
         assertThat(result.success()).isTrue();
         assertThat(result.message()).contains("동명이인 확인 필요");

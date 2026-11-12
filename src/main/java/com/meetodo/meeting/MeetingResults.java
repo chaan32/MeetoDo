@@ -12,6 +12,7 @@ import com.meetodo.meeting.dto.MeetingHistoryResponse;
 import com.meetodo.meeting.dto.MeetingResponse;
 import com.meetodo.meeting.dto.ToolCallLogResponse;
 import com.meetodo.task.Task;
+import com.meetodo.task.UnresolvedAssignee;
 import com.meetodo.task.TaskMentionService;
 import com.meetodo.task.TaskRepository;
 import org.springframework.stereotype.Service;
@@ -69,6 +70,7 @@ public class MeetingResults {
         Map<Long, Long> mentionCounts = toolMentions.counts(meetingTasks.keySet());
         Map<Long, String> warnings = new HashMap<>();
         Map<Long, String> reasons = new HashMap<>();
+        Map<Long, UnresolvedAssignee> details = new HashMap<>();
         for (ToolCallLog log : logs.findAllByMeetingIdOrderByCallOrderAsc(meeting.getId())) {
             if (!log.getSuccess() || (!"createTask".equals(log.getToolName()) && !"findTasks".equals(log.getToolName()))) continue;
             try {
@@ -79,12 +81,17 @@ public class MeetingResults {
                     String reason = item.path("unassignedReason").asText("");
                     if (item.path("id").canConvertToLong()) {
                         if (!reason.isBlank()) reasons.put(item.path("id").asLong(), reason);
+                        if (item.has("unresolvedAssignee")) {
+                            JsonNode detail = item.get("unresolvedAssignee");
+                            details.put(item.path("id").asLong(), detail.isNull() ? null
+                                    : mapper.treeToValue(detail, UnresolvedAssignee.class));
+                        }
                         if (!warning.isBlank()) warnings.put(item.path("id").asLong(), warning);
                     }
                 }
             } catch (Exception ignored) { }
         }
-        return MeetingResponse.from(meeting, List.copyOf(meetingTasks.values()), resultTypes, mentionCounts, warnings, reasons);
+        return MeetingResponse.from(meeting, List.copyOf(meetingTasks.values()), resultTypes, mentionCounts, warnings, reasons, details);
     }
 
     private Set<Long> existingTaskIds(Long meetingId) {

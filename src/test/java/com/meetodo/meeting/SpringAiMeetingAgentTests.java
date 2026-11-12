@@ -45,11 +45,15 @@ class SpringAiMeetingAgentTests {
     SpringAiMeetingAgent agent;
 
     final java.util.Map<Long, Member> fixtureMembers = new java.util.HashMap<>();
+    int fixtureCallOrder;
+    int fixtureLastLookup;
     final java.util.Set<String> fixtureLookups = new java.util.HashSet<>();
 
     @BeforeEach
     void setUp() {
         fixtureLookups.clear();
+        fixtureCallOrder = 0;
+        fixtureLastLookup = 0;
         fixtureMembers.clear();
         model = mock(ChatModel.class);
         members = mock(MemberRepository.class);
@@ -60,6 +64,7 @@ class SpringAiMeetingAgentTests {
         var storedLogs = new java.util.ArrayList<ToolCallLog>();
         when(logs.save(any(ToolCallLog.class))).thenAnswer(call -> { storedLogs.add(call.getArgument(0)); return call.getArgument(0); });
         when(logs.findAllByMeetingIdOrderByCallOrderAsc(any())).thenAnswer(call -> List.copyOf(storedLogs));
+        when(logs.findTopByMeeting_IdOrderByCallOrderDesc(any())).thenAnswer(call -> storedLogs.stream().reduce((a, b) -> b));
         execution = new ToolExecutionService(logs, new ObjectMapper());
         Clock clock = Clock.fixed(Instant.parse("2026-11-11T00:00:00Z"), ZoneId.of("Asia/Seoul"));
         agent = new SpringAiMeetingAgent(model, ToolCallingManager.builder().build(),
@@ -277,7 +282,10 @@ class SpringAiMeetingAgentTests {
             ObjectMapper mapper = new ObjectMapper();
             var object = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(arguments);
             var calls = new java.util.ArrayList<AssistantMessage.ToolCall>();
-            if (name.equals("findMember")) fixtureLookups.add(object.path("name").asText());
+            if (name.equals("findMember")) {
+                fixtureLookups.add(object.path("name").asText());
+                fixtureLastLookup = fixtureCallOrder + 1;
+            }
             if (name.equals("findTasks")) {
                 if (object.has("assignee")) {
                     object.put("assigneeName", object.path("assignee").asText());
@@ -305,9 +313,12 @@ class SpringAiMeetingAgentTests {
                     calls.add(new AssistantMessage.ToolCall("lookup", "function", "findMember",
                             mapper.writeValueAsString(java.util.Map.of("name", memberName))));
                 }
+                if (token.startsWith("unassigned:") && !token.equals("unassigned:NONE"))
+                    object.put("lookupCallOrder", fixtureLastLookup);
                 object.remove(java.util.List.of("assigneeId", "assigneeName", "unassignedBecauseAmbiguous"));
                 object.put("assignee", token);
             }
+            fixtureCallOrder += calls.size() + 1;
             calls.add(new AssistantMessage.ToolCall("call-" + name, "function", name, mapper.writeValueAsString(object)));
             return new ChatResponse(List.of(new Generation(AssistantMessage.builder().content("").toolCalls(calls).build())));
         } catch (Exception exception) { throw new IllegalArgumentException(exception); }

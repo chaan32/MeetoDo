@@ -23,7 +23,7 @@ public class FindMemberTool {
         this.execution = execution;
     }
 
-    @Tool(name = "findMember", description = "팀원을 이름과 선택 팀으로 조회한다. 회의록에 팀 이름이 실제로 있으면 첫 호출부터 team을 함께 전달한다. 팀 접미사·대소문자·공백 차이는 허용하며 역할만으로 팀을 추측하지 않는다.")
+    @Tool(name = "findMember", description = "팀원을 이름과 선택 팀으로 조회한다. 회의록에 팀 이름이 실제로 있으면 첫 호출부터 team을 함께 전달한다. 팀 접미사·대소문자·공백 차이는 허용하며 역할만으로 팀을 추측하지 않는다. 미정으로 등록할 때는 이 결과의 lookupCallOrder 값을 createTask에 그대로 전달한다.")
     public ToolResult invokeFindMember(@ToolParam(description = "조회할 팀원의 이름") String name,
                                        @ToolParam(description = "회의록에 명시된 팀. 없으면 필드 생략. 빈 문자열·공백은 오류", required = false) String team,
                                        ToolContext toolContext) {

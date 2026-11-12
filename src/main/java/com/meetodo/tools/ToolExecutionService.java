@@ -2,12 +2,14 @@ package com.meetodo.tools;
 
 import java.util.regex.Pattern;
 import java.util.function.Supplier;
+import java.util.ArrayList;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.meetodo.meeting.Meeting;
 import com.meetodo.member.Member;
+import com.meetodo.task.UnresolvedAssignee;
 import com.meetodo.meeting.ToolCallLog;
 import com.meetodo.meeting.ToolCallLogRepository;
 import org.springframework.ai.chat.model.ToolContext;
@@ -75,6 +77,42 @@ public class ToolExecutionService {
         return false;
     }
 
+    public UnresolvedAssignee unresolvedAssignee(Meeting meeting, Integer lookupCallOrder, String reason) {
+        if (lookupCallOrder == null || lookupCallOrder <= 0) return null;
+        for (ToolCallLog log : logs.findAllByMeetingIdOrderByCallOrderAsc(meeting.getId())) {
+            if (log.getCallOrder() != lookupCallOrder || !"findMember".equals(log.getToolName())) continue;
+            if (log.getResult() == null) return null;
+            try {
+                JsonNode result = mapper.readTree(log.getResult());
+                JsonNode data = result.path("data").isTextual() ? mapper.readTree(result.path("data").asText()) : null;
+                boolean matches = switch (reason) {
+                    case "AMBIGUOUS" -> log.getSuccess() && data != null && data.isArray() && data.size() > 1;
+                    case "NOT_FOUND" -> "MEMBER_NOT_FOUND".equals(log.getErrorCode());
+                    case "TEAM_MISMATCH" -> "MEMBER_TEAM_NOT_FOUND".equals(log.getErrorCode());
+                    default -> false;
+                };
+                if (!matches) return null;
+                JsonNode args = mapper.readTree(log.getArguments());
+                var candidates = new ArrayList<UnresolvedAssignee.Candidate>();
+                if (data != null && data.isArray()) {
+                    for (JsonNode candidate : data) {
+                        if (candidates.size() == 20) break;
+                        candidates.add(new UnresolvedAssignee.Candidate(candidate.path("id").isNumber() ? candidate.path("id").asLong() : null,
+                                snapshotText(candidate.path("name").asText(), meeting), snapshotText(candidate.path("team").asText(), meeting)));
+                    }
+                }
+                return new UnresolvedAssignee(reason, snapshotText(args.path("name").asText(), meeting),
+                        args.has("team") ? snapshotText(args.path("team").asText(), meeting) : null,
+                        candidates, data != null && data.isArray() ? Math.max(0, data.size() - candidates.size()) : 0);
+            } catch (JsonProcessingException ignored) { return null; }
+        }
+        return null;
+    }
+
+    private String snapshotText(String value, Meeting meeting) {
+        return sanitize(value, meeting.getRawText());
+    }
+
     public boolean hasPastDueFailure(Meeting meeting, String title, String assignee) {
         return logs.findAllByMeetingIdOrderByCallOrderAsc(meeting.getId()).stream()
                 .filter(log -> "PAST_DUE_DATE".equals(log.getErrorCode()))
@@ -115,9 +153,11 @@ public class ToolExecutionService {
         long latencyMs = Math.max(0, (System.nanoTime() - started) / 1_000_000);
         String rawText = meeting.getRawText();
         String safeArguments = sanitize(toJson(arguments), rawText);
-        String safeResult = sanitize(toJson(result), rawText);
         int callOrder = logs.findTopByMeeting_IdOrderByCallOrderDesc(meeting.getId())
                 .map(previous -> previous.getCallOrder() + 1).orElse(1);
+        result = new ToolResult(result.success(), result.errorCode(), sanitize(result.message(), rawText),
+                sanitize(result.data(), rawText), "findMember".equals(toolName) ? Integer.valueOf(callOrder) : result.lookupCallOrder());
+        String safeResult = toJson(result);
         if (result.success()) {
             logs.save(ToolCallLog.success(meeting, toolName, safeArguments, safeResult, latencyMs, callOrder));
         } else {

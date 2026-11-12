@@ -116,6 +116,7 @@ public class SpringAiMeetingAgent implements MeetingAgent {
                 미등록 이름은 unassigned:NOT_FOUND ('등록되지 않은 담당자'), 담당자 언급이 없으면 unassigned:NONE을 사용한다.
                 팀 불일치(MEMBER_TEAM_NOT_FOUND)는 다른 팀의 같은 이름 팀원과 동일인인지 알 수 없으므로 unassigned:TEAM_MISMATCH로 처리하고 팀 불일치 확인 필요 경고를 남긴다. team을 생략해 다시 조회하더라도 배정 근거로 사용하지 않는다.
                 배정과 미정을 동시에 요청하지 않는다. 오류를 고칠 때 올바른 후보 ID를 무조건 버리지 말고 회의록의 팀을 다시 확인한다.
+                미정 사유 AMBIGUOUS / NOT_FOUND / TEAM_MISMATCH로 createTask를 호출할 때는 해당 findMember 결과의 lookupCallOrder 값을 그대로 전달한다. 이름·팀·후보를 별도 인자로 만들지 않는다. NONE은 조회 참조가 필요 없다.
                 createTask가 오류를 반환하면 설명을 반영해 제한된 범위에서 수정해 재시도한다. 경고가 있는 결과는 최종 답변에 그대로 설명한다.
                 최종 답변에는 짧은 요약, 등록한 작업·담당자·마감일, 담당자 미정 항목, 마감일 경고를 포함한다.
                 notifySlack은 사용할 수 없으며 호출하지 않는다.

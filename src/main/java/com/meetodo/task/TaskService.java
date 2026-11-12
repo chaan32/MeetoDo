@@ -64,10 +64,14 @@ public class TaskService {
     }
 
     public ToolTaskResult createFromToolIdempotently(String title, Member assignee, LocalDate dueDate, Meeting meeting) {
+        return createFromToolIdempotently(title, assignee, dueDate, meeting, null);
+    }
+
+    public ToolTaskResult createFromToolIdempotently(String title, Member assignee, LocalDate dueDate, Meeting meeting, UnresolvedAssignee unresolved) {
         String normalizedTitle = title.trim();
         Task existing = findExistingTodo(normalizedTitle, assignee);
         if (existing != null) return new ToolTaskResult(TaskResponse.from(existing), false);
-        Task saved = tasks.save(Task.create(normalizedTitle, assignee, dueDate, meeting));
+        Task saved = tasks.save(Task.create(normalizedTitle, assignee, dueDate, meeting, unresolved));
         return new ToolTaskResult(TaskResponse.from(saved), true);
     }
 
