@@ -56,7 +56,8 @@ public class SpringAiMeetingAgent implements MeetingAgent {
                 .toolContext(Map.of(ToolExecutionService.MEETING_CONTEXT_KEY, meeting))
                 .internalToolExecutionEnabled(false)
                 .build();
-        String systemPrompt = systemPrompt(LocalDate.now(clock.withZone(SEOUL)));
+        String systemPrompt = systemPrompt(meeting.getStartedAt() == null
+                ? LocalDate.now(clock.withZone(SEOUL)) : meeting.getStartedAt().atZone(SEOUL).toLocalDate());
         if (meeting.getSource() == MeetingSource.AUDIO)
             systemPrompt += "\n이 입력은 화자 구분 없이 음성에서 변환됐다. '제가 할게요', '내가' 같은 1인칭만 있고 담당자 이름이 명확하지 않으면 화자를 추측하지 말고 assignee=unassigned:NONE으로 등록한다. 사람이 Slack에서 담당자를 지정한다.";
         Prompt prompt = new Prompt(List.of(new SystemMessage(systemPrompt), new UserMessage(meeting.getRawText())), options);
@@ -104,8 +105,10 @@ public class SpringAiMeetingAgent implements MeetingAgent {
     private String systemPrompt(LocalDate today) {
         return """
                 너는 회의록에서 실행 가능한 할 일을 정리하는 업무 보조 에이전트다.
-                오늘 날짜는 %s (Asia/Seoul)이다. 상대 날짜는 이 날짜를 기준으로 계산하고, 마감일은 yyyy-MM-dd로 전달한다.
-                주간 표현은 월요일부터 일요일까지로 해석한다. "이번 주 안에"는 이번 주 일요일, "다음 주 금요일"은 다음 주 금요일로 계산한다.
+                오늘 날짜는 %s (Asia/Seoul)이다. createTask의 dueDate에는 회의록에 적힌 원래 날짜 표현을 그대로 전달한다.
+                상대 날짜나 연도 없는 날짜를 직접 계산하거나 ISO 날짜로 바꾸지 않는다. 날짜 계산은 서버가 한다.
+                예: "다음 주 금요일", "이번 주 안에", "11-20", "20일"을 원문 그대로 전달한다. 지원 여부를 모르더라도 원표현을 보낸다.
+                날짜가 없으면 빈 값을 보낸다. 날짜 계산을 위한 추가 도구 호출은 필요 없다.
                 회의에서 명시적으로 결정되거나 요청된 작업만 추출한다. 담당자나 마감일을 추측하지 않는다.
                 title은 1~200자의 짧은 명사형 업무 이름으로 만든다. 담당자 이름, 마감일, '~한다/~할 것' 같은 문장 어미와 끝 마침표를 제목에 넣지 않는다.
                 좋은 예: 'API 명세 정리', '배포 로그 정리', '로그인 API 오류 수정'. 나쁜 예: '배포 로그를 정리한다.', '민수는 API 명세를 정리할 것'.

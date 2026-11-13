@@ -59,7 +59,91 @@ class MeetingToolsTests {
         createTask = new CreateTaskTool(members, taskService, mentions, execution, clock);
     }
 
-    // 검증: returnsMemberForExactNameAndNameWithWhitespace 시나리오의 기대 동작을 확인한다.
+    // 검증: 실제 음성 원문의 다음 주 금요일을 모델이 만들어 낸 11-24로 바꾸면 저장하지 않는다.
+    @Test
+    void rejectsInventedIsoDateFromObservedVoiceTranscript() {
+        Meeting meeting = Meeting.create("백엔드 팀 지영 씨는 로그인 API 오류를 다음 주 금요일까지 수정해 주세요.", MeetingSource.AUDIO);
+        when(tasks.save(any(Task.class))).thenAnswer(call -> call.getArgument(0));
+
+        ToolResult result = createTask.createTask("로그인 API 오류 수정", "unassigned:NONE", "2026-11-24", meeting);
+
+        assertThat(result.success()).isFalse();
+        verify(tasks, never()).save(any(Task.class));
+    }
+
+    // 검증: 지원하지 않는 원표현도 저장하고 날짜 경고를 별도 필드에 보존한다.
+    @Test void savesUnknownOriginalExpressionWithWarning() {
+        Meeting meeting = Meeting.create("자료 정리는 월말쯤까지", MeetingSource.API_TEXT);
+        when(tasks.save(any(Task.class))).thenAnswer(call -> call.getArgument(0));
+        ToolResult result = createTask.createTask("자료 정리", "unassigned:NONE", "월말쯤", meeting);
+        assertThat(result.success()).isTrue();
+        var saved = org.mockito.ArgumentCaptor.forClass(Task.class);
+        verify(tasks).save(saved.capture());
+        assertThat(saved.getValue().getDueDate()).isNull();
+        assertThat(saved.getValue().getDueDateWarning()).isEqualTo(DateResolver.UNKNOWN_WARNING);
+        assertThat(result.data()).contains("dueDateWarning", DateResolver.UNKNOWN_WARNING);
+    }
+
+    // 검증: 실제 짧은 날짜 원문 11-12는 가장 가까운 미래 연도로 계산한다.
+    @Test void resolvesObservedShortDateFromTranscript() {
+        Meeting meeting = Meeting.create("프론트엔드팀 해찬은 화면 오류를 11-12까지 수정한다.", MeetingSource.API_TEXT);
+        meeting.startProcessing(Instant.parse("2026-11-13T00:00:00Z"));
+        when(tasks.save(any(Task.class))).thenAnswer(call -> call.getArgument(0));
+        assertThat(createTask.createTask("화면 오류 수정", "unassigned:NONE", "11-12", meeting).success()).isTrue();
+        var saved = org.mockito.ArgumentCaptor.forClass(Task.class);
+        verify(tasks).save(saved.capture());
+        assertThat(saved.getValue().getDueDate()).isEqualTo(java.time.LocalDate.of(2027, 11, 12));
+    }
+
+    // 검증: 도구 실행 시계가 달라도 한 회의 시작일의 서울 날짜를 사용한다.
+    @Test void anchorsDeadlineToMeetingStartedAt() {
+        Meeting meeting = Meeting.create("내일까지 자료 정리", MeetingSource.API_TEXT);
+        meeting.startProcessing(Instant.parse("2026-11-13T14:59:59Z"));
+        when(tasks.save(any(Task.class))).thenAnswer(call -> call.getArgument(0));
+        assertThat(createTask.createTask("자료 정리", "unassigned:NONE", "내일", meeting).success()).isTrue();
+        var saved = org.mockito.ArgumentCaptor.forClass(Task.class);
+        verify(tasks).save(saved.capture());
+        assertThat(saved.getValue().getDueDate()).isEqualTo(java.time.LocalDate.of(2026, 11, 14));
+    }
+
+    // 검증: 잘못된 절대 날짜가 원문에 있어도 저장하지 않는다.
+    @Test void rejectsInvalidAbsoluteDateActuallyInTranscript() {
+        var result = createTask.createTask("자료 정리", "unassigned:NONE", "2026-02-30", Meeting.create("2026-02-30까지 자료 정리", MeetingSource.API_TEXT));
+        assertThat(result.errorCode()).isEqualTo("INVALID_DUE_DATE");
+        verify(tasks, never()).save(any(Task.class));
+    }
+
+    // 검증: 이미 지난 이번 주 요일은 다음 주로 넘기지 않고 재시도 시 날짜 경고와 함께 비운다.
+    @Test void retriesPastWeekdayWithoutMovingToNextWeek() {
+        Meeting meeting = Meeting.create("이번 주 월요일까지 자료 정리", MeetingSource.API_TEXT);
+        ReflectionTestUtils.setField(meeting, "id", 97L);
+        meeting.startProcessing(Instant.parse("2026-11-13T00:00:00Z"));
+        var recorded = new java.util.ArrayList<ToolCallLog>();
+        when(logs.save(any(ToolCallLog.class))).thenAnswer(call -> { recorded.add(call.getArgument(0)); return call.getArgument(0); });
+        when(logs.findAllByMeetingIdOrderByCallOrderAsc(97L)).thenAnswer(call -> List.copyOf(recorded));
+        when(tasks.save(any(Task.class))).thenAnswer(call -> call.getArgument(0));
+
+        assertThat(createTask.createTask("자료 정리", "unassigned:NONE", "이번 주 월요일", meeting).errorCode()).isEqualTo("PAST_DUE_DATE");
+        assertThat(createTask.createTask("자료 정리", "unassigned:NONE", "이번 주 월요일", meeting).success()).isTrue();
+        var saved = org.mockito.ArgumentCaptor.forClass(Task.class);
+        verify(tasks).save(saved.capture());
+        assertThat(saved.getValue().getDueDate()).isNull();
+        assertThat(saved.getValue().getDueDateWarning()).isEqualTo(DateResolver.PAST_WARNING);
+    }
+
+    // 검증: 다른 회의의 기존 작업 날짜 경고를 새 표현으로 덮어쓰지 않는다.
+    @Test void returnsPersistedWarningWhenReusingExistingTask() {
+        Task existing = Task.create("자료 정리", null, null);
+        ReflectionTestUtils.setField(existing, "id", 91L);
+        existing.setDueDateWarning(DateResolver.PAST_WARNING);
+        when(tasks.findAllByAssigneeIsNullAndStatusOrderByCreatedAtDesc(TaskStatus.TODO)).thenReturn(List.of(existing));
+        ToolResult result = createTask.createTask("자료 정리", "unassigned:NONE", "월말쯤", Meeting.create("자료 정리는 월말쯤", MeetingSource.API_TEXT));
+        assertThat(result.success()).isTrue();
+        assertThat(result.data()).contains("EXISTING", DateResolver.PAST_WARNING).doesNotContain(DateResolver.UNKNOWN_WARNING);
+        verify(tasks, never()).save(any(Task.class));
+    }
+
+    // 검증: 팀원 조회는 이름 앞뒤 공백을 제거한다.
     @Test
     void returnsMemberForExactNameAndNameWithWhitespace() {
         Member member = new Member("김", "민수", "미지정", "U-DEV-MINSU");
@@ -132,7 +216,7 @@ class MeetingToolsTests {
     // 검증: createsTaskForMeetingOrLeavesUnknownAssigneeUnassigned 시나리오의 기대 동작을 확인한다.
     @Test
     void createsTaskForMeetingOrLeavesUnknownAssigneeUnassigned() {
-        Meeting meeting = Meeting.create("private meeting raw text", MeetingSource.API_TEXT);
+        Meeting meeting = Meeting.create("private meeting raw text 2026-11-20", MeetingSource.API_TEXT);
         ReflectionTestUtils.setField(meeting, "id", 42L);
         Member member = new Member("김", "민수", "미지정", "U-DEV-MINSU");
         ReflectionTestUtils.setField(member, "id", 1L);
@@ -157,7 +241,7 @@ class MeetingToolsTests {
     // 검증: rejectsInvalidTitleDatesAndPastDatesWithoutSaving 시나리오의 기대 동작을 확인한다.
     @Test
     void rejectsInvalidTitleDatesAndPastDatesWithoutSaving() {
-        Meeting meeting = Meeting.create("meeting", MeetingSource.API_TEXT);
+        Meeting meeting = Meeting.create("2026/13/45, 2026-11-10", MeetingSource.API_TEXT);
 
         assertThat(createTask.createTask("  ", null, null, meeting).errorCode()).isEqualTo("INVALID_TITLE");
         assertThat(createTask.createTask("x".repeat(201), null, null, meeting).errorCode()).isEqualTo("TITLE_TOO_LONG");
@@ -216,7 +300,7 @@ class MeetingToolsTests {
     // 검증: afterRetryingTheSamePastDateRegistersWithoutDueDateAndReturnsWarning 시나리오의 기대 동작을 확인한다.
     @Test
     void afterRetryingTheSamePastDateRegistersWithoutDueDateAndReturnsWarning() {
-        Meeting meeting = Meeting.create("meeting", MeetingSource.API_TEXT);
+        Meeting meeting = Meeting.create("기한 확인 2026-11-10", MeetingSource.API_TEXT);
         org.springframework.test.util.ReflectionTestUtils.setField(meeting, "id", 61L);
         String arguments = "{\"title\":\"기한 확인\",\"assignee\":\"unassigned:NONE\",\"dueDate\":\"2026-11-10\"}";
         ToolCallLog previousFailure = ToolCallLog.failure(meeting, "createTask", arguments,
@@ -232,6 +316,7 @@ class MeetingToolsTests {
         var captor = org.mockito.ArgumentCaptor.forClass(Task.class);
         verify(tasks).save(captor.capture());
         assertThat(captor.getValue().getDueDate()).isNull();
+        assertThat(captor.getValue().getDueDateWarning()).isEqualTo(DateResolver.PAST_WARNING);
     }
 
     // 검증: 등록되지 않은 팀 조회는 같은 이름의 후보를 안내하고 자동 선택하지 않는다.

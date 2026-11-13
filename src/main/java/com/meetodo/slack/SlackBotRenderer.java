@@ -44,6 +44,49 @@ public class SlackBotRenderer {
         return new Rendered(title + rendered.text().substring(escapedTitle.length()), List.copyOf(blocks));
     }
 
+    public Rendered renderDirectMessage(NotificationMessage message, List<Task> tasks,
+            Map<Long, MeetingTaskResponse> metadata, String permalink, String actor,
+            SlackMessageReference.NotificationKind kind, String targetUser) {
+        if (kind == SlackMessageReference.NotificationKind.ASSIGNMENT) {
+            Rendered rendered = renderDirectMessage(message, tasks, metadata, permalink, actor);
+            return stripTransferredControls(rendered, tasks, targetUser);
+        }
+        String title = kind == SlackMessageReference.NotificationKind.HANDOFF
+                ? "할 일이 다른 담당자에게 넘어갔어요"
+                : "📝 할 일이 배정됐어요" + (mention(actor).isEmpty() ? "" : " (변경: " + mention(actor) + ")");
+        Rendered rendered = render(new NotificationMessage(message.meetingId(), title, List.of(), List.of(), message.footer()),
+                tasks, metadata, permalink);
+        var blocks = new ArrayList<>(rendered.blocks()); blocks.set(0, section(title, null));
+        rendered = new Rendered(title + rendered.text().substring(bounded(escape(title)).length()), List.copyOf(blocks));
+        return kind == SlackMessageReference.NotificationKind.HANDOFF ? withoutControls(rendered)
+                : stripTransferredControls(rendered, tasks, targetUser);
+    }
+
+    private Rendered stripTransferredControls(Rendered rendered, List<Task> tasks, String targetUser) {
+        if (targetUser == null) return rendered;
+        var transferred = tasks.stream().filter(task -> task.getAssignee() == null
+                || !targetUser.equals(task.getAssignee().getSlackUserId())).map(Task::getId).toList();
+        List<Map<String, Object>> blocks = new ArrayList<>();
+        for (var original : rendered.blocks()) {
+            if (original.get("block_id") instanceof String id && transferred.stream().anyMatch(task -> id.equals(ASSIGN_BLOCK_PREFIX + task))) continue;
+            var block = new LinkedHashMap<>(original);
+            if (block.get("accessory") instanceof Map<?, ?> accessory && accessory.get("options") instanceof List<?> options
+                    && options.stream().anyMatch(option -> option instanceof Map<?, ?> map && transferred.stream()
+                        .anyMatch(task -> ("manage:" + task).equals(map.get("value"))))) block.remove("accessory");
+            blocks.add(block);
+        }
+        return new Rendered(rendered.text(), List.copyOf(blocks));
+    }
+
+    private Rendered withoutControls(Rendered rendered) {
+        List<Map<String,Object>> blocks = new ArrayList<>();
+        for (var original : rendered.blocks()) {
+            if ("actions".equals(original.get("type"))) continue;
+            var block = new LinkedHashMap<>(original); block.remove("accessory"); blocks.add(block);
+        }
+        return new Rendered(rendered.text(), List.copyOf(blocks));
+    }
+
     List<Map<String, Object>> taskBlocks(Task task) {
         var message = new NotificationMessage(null, "내 할 일", List.of(), List.of(), "MeetoDo");
         List<Map<String, Object>> blocks = new ArrayList<>();
@@ -113,8 +156,14 @@ public class SlackBotRenderer {
         String state = task.getStatus() == TaskStatus.DONE ? "✅ 완료" : "⬜ 미완료";
         String actor = mention(task.getCompletedBySlackUserId());
         if (task.getStatus() == TaskStatus.DONE && !actor.isEmpty()) state += " (" + actor + ")";
-        String warning = task.getAssignee() != null ? "" : detail != null ? detail.warning()
-                : task.getUnresolvedAssignee() == null ? "" : task.getUnresolvedAssignee().warning();
+        String warning = task.getWarning();
+        if (task.getAssignee() == null && detail != null && detail.warning() != null && !detail.warning().isBlank()) {
+            warning = detail.warning();
+            if (task.getDueDateWarning() != null && !warning.contains(task.getDueDateWarning()))
+                warning += " · " + task.getDueDateWarning();
+        }
+        if ((warning == null || warning.isBlank()) && detail != null && detail.dueDateWarning() != null)
+            warning = detail.dueDateWarning();
         String value = state + " · " + owner + " · " + escape(task.getTitle()) + " · "
                 + (task.getDueDate() == null ? "마감일 없음" : task.getDueDate());
         if (warning != null && !warning.isBlank()) value += " · ⚠️ " + escape(warning);
@@ -164,6 +213,7 @@ public class SlackBotRenderer {
         var block = section(text, null);
         if (task.isDeleted()) return block;
         List<Map<String, Object>> options = new ArrayList<>();
+        options.add(menuOption("관리…", "manage", task.getId()));
         options.add(menuOption("제목 수정", "title", task.getId()));
         options.add(menuOption("마감일 수정", "due", task.getId()));
         if (task.getStatus() == TaskStatus.DONE) options.add(menuOption("다시 열기", "reopen", task.getId()));

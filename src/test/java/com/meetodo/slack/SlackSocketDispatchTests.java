@@ -35,6 +35,11 @@ class SlackSocketDispatchTests {
         assertThat(order).containsExactly("ack","opened"); assertThat(queue).isEmpty();
     }
 
+    @Test void managementMenuOpensPrivateModalImmediatelyAfterWireAck() throws Exception {
+        // 개인 관리 모달의 trigger도 ACK 직후 대기열을 건너뛴다.
+        assertMenuDispatch("manage:7", true);
+    }
+
     @Test void titleMenuOpensModalImmediatelyAfterWireAck() throws Exception {
         // 제목 수정의 실제 overflow 페이로드는 ACK 후 기존 완료 대기열을 건너뛴다.
         assertMenuDispatch("title:7", true);

@@ -41,6 +41,20 @@ public class Task {
     @Column(name = "due_date")
     private LocalDate dueDate;
 
+    @Column(name = "due_date_warning", length = 500)
+    private String dueDateWarning;
+
+    public String getDueDateWarning() { return dueDateWarning; }
+    public void setDueDateWarning(String warning) {
+        if (warning != null && warning.length() > 500) throw new IllegalArgumentException("Date warning is too long");
+        dueDateWarning = warning == null || warning.isBlank() ? null : warning;
+    }
+    public String getWarning() {
+        String ownerWarning = assignee == null && unresolvedAssignee != null ? unresolvedAssignee.warning() : "";
+        return java.util.stream.Stream.of(ownerWarning, dueDateWarning)
+                .filter(value -> value != null && !value.isBlank()).collect(java.util.stream.Collectors.joining(" · "));
+    }
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private TaskStatus status;

@@ -21,7 +21,7 @@ class TaskTitleToolTests {
     final Clock clock=Clock.fixed(Instant.parse("2026-11-11T00:00:00Z"),ZoneId.of("Asia/Seoul"));
     final ToolExecutionService execution=new ToolExecutionService(logs,new ObjectMapper());
     final CreateTaskTool tool=new CreateTaskTool(members,new TaskService(tasks,members,mentions,clock),mentions,execution,clock);
-    final Meeting meeting=Meeting.create("단위 검증 원문",MeetingSource.API_TEXT);
+    final Meeting meeting=Meeting.create("단위 검증 원문 2026-11-10",MeetingSource.API_TEXT);
     final List<ToolCallLog> storedLogs=new ArrayList<>();
     @BeforeEach void setup() {
         ReflectionTestUtils.setField(meeting,"id",501L);

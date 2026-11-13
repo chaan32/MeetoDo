@@ -63,6 +63,12 @@ public class TaskApiExceptionHandler {
         return null;
     }
 
+    @ExceptionHandler(TaskCompletionForbiddenException.class)
+    ResponseEntity<ApiError> completionForbidden(TaskCompletionForbiddenException exception) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(new ApiError(
+                "TASK_COMPLETION_FORBIDDEN", exception.getMessage(), Map.of()));
+    }
+
     @ExceptionHandler(TaskMutationException.class)
     ResponseEntity<ApiError> mutation(TaskMutationException exception) {
         return ResponseEntity.status(exception.getStatus()).body(new ApiError(exception.getCode(), exception.getMessage(), Map.of()));

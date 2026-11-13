@@ -324,6 +324,81 @@ class TaskMutationApiTests {
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_SLACK_USER_ID"));
     }
 
+    // 관리자 완료 권한은 일반 수정 권한과 다르며 혼합 PATCH도 전체 거절한다.
+    @Test void adminCannotCompleteAnotherOwnersTaskWithMixedPatch() throws Exception {
+        Task task = assigned();
+        edit(task, "UADMIN1", "{\"title\":\"변경 API 검토\",\"status\":\"DONE\"}")
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("TASK_COMPLETION_FORBIDDEN"));
+        assertThat(task.getTitle()).isEqualTo("기존 API 검토");
+        assertThat(task.getStatus()).isEqualTo(TaskStatus.TODO);
+        assertThat(events.findAllByTask_IdOrderByAtAscIdAsc(task.getId())).isEmpty();
+    }
+
+    // 기존 REST 담당자 경로에서 관리자가 실제 담당자를 바꿀 수 있어야 한다.
+    @Test void adminReassignsThroughExistingAssigneePatch() throws Exception {
+        Task task = assigned();
+        Member next = members.save(new Member("박", "지영", "디자인팀", "UNEXT1"));
+        mvc.perform(patch("/api/tasks/{id}/assignee", task.getId()).header("X-Slack-User-Id", "UADMIN1")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"assigneeId\":" + next.getId() + "}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.assignee.id").value(next.getId()));
+    }
+
+    // 담당자는 REST 완료가 가능하고 완료 메타데이터를 기록한다.
+    @Test void ownerCompletesAssignedTaskThroughRest() throws Exception {
+        edit(assigned(), "UOWNER1", "{\"status\":\"DONE\"}")
+                .andExpect(status().isOk()).andExpect(jsonPath("$.completedBySlackUserId").value("UOWNER1"));
+    }
+
+    // 관리자 자신의 업무는 담당자 자격으로 완료한다.
+    @Test void adminCompletesOwnTaskThroughRest() throws Exception {
+        Member admin = members.save(new Member("김", "관리", "운영팀", "UADMIN1"));
+        edit(tasks.save(Task.create("운영 API 검토", admin, null)), "UADMIN1", "{\"status\":\"DONE\"}")
+                .andExpect(status().isOk()).andExpect(jsonPath("$.completedBySlackUserId").value("UADMIN1"));
+    }
+
+    // 일반 사용자도 타인의 REST 완료는 거절되며 기존 상태를 보존한다.
+    @Test void otherUserCannotCompleteAssignedTaskThroughRest() throws Exception {
+        Task task = assigned();
+        edit(task, "UOTHER1", "{\"status\":\"DONE\"}")
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("TASK_COMPLETION_FORBIDDEN"));
+        assertThat(task.getStatus()).isEqualTo(TaskStatus.TODO);
+    }
+
+    // 담당자가 지정된 업무는 소유자라도 관리자 없이는 재지정하지 않는다.
+    @Test void ownerCannotReassignThroughRest() throws Exception {
+        Task task = assigned();
+        Member next = members.save(new Member("박", "지영", "디자인팀", "UNEXT1"));
+        reassign(task, next, "UOWNER1").andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("TASK_REASSIGNMENT_FORBIDDEN"));
+        assertThat(task.getAssignee().getSlackUserId()).isEqualTo("UOWNER1");
+        assertThat(events.findAllByTask_IdOrderByAtAscIdAsc(task.getId())).isEmpty();
+    }
+
+    // 완료된 업무 재지정은 409 상태 충돌로 응답한다.
+    @Test void doneTaskCannotBeReassignedThroughRest() throws Exception {
+        Task task = assigned();
+        task.changeStatus(TaskStatus.DONE, "UOWNER1", NOW);
+        Member next = members.save(new Member("박", "지영", "디자인팀", "UNEXT1"));
+        reassign(task, next, "UADMIN1").andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("TASK_NOT_ASSIGNABLE"));
+    }
+
+    // 재지정 중복 충돌은 이력과 기존 담당자를 함께 보존한다.
+    @Test void duplicateReassignmentThroughRestLeavesNoAudit() throws Exception {
+        Task task = assigned();
+        Member next = members.save(new Member("박", "지영", "디자인팀", "UNEXT1"));
+        Task duplicate = tasks.save(Task.create(task.getTitle(), next, null));
+        reassign(task, next, "UADMIN1").andExpect(status().isConflict())
+                .andExpect(jsonPath("$.existingTaskId").value(duplicate.getId()));
+        assertThat(task.getAssignee().getSlackUserId()).isEqualTo("UOWNER1");
+        assertThat(events.findAllByTask_IdOrderByAtAscIdAsc(task.getId())).isEmpty();
+    }
+
+    private ResultActions reassign(Task task, Member target, String actor) throws Exception {
+        return mvc.perform(patch("/api/tasks/{id}/assignee", task.getId()).header("X-Slack-User-Id", actor)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"assigneeId\":" + target.getId() + "}"));
+    }
+
     private Task unassigned() { return tasks.save(Task.create("기존 API 검토", null, null)); }
 
     private Task assigned() {

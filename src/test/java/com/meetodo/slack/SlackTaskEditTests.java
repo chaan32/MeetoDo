@@ -41,6 +41,13 @@ class SlackTaskEditTests {
     }
     private void open(String operation) { edits.select("trigger-1", "C1", "1.2", "U1", operation + ":7"); }
 
+    @Test void ownerManagementModalListsOwnActionsWithoutAdminReassignment() throws Exception {
+        // 일반 담당자의 개인 관리 모달에는 재배정 선택이 나타나지 않는다.
+        open("manage");
+        var request = ArgumentCaptor.forClass(ViewsOpenRequest.class); verify(client).viewsOpen(request.capture());
+        assertThat(request.getValue().getViewAsString()).contains("제목 수정", "마감일 수정", "삭제").doesNotContain("담당자 변경", "reassign");
+    }
+
     @Test void titleModalLoadsDatabaseValueAndTwoHundredCharacterLimit() throws Exception {
         // 제목 모달은 DB의 현재 제목과 200자 제한을 표시하며 task ID를 메타데이터로 신뢰하지 않는다.
         open("title");
@@ -185,6 +192,143 @@ class SlackTaskEditTests {
         verify(home).publish(eq("U1"),argThat(text -> !text.contains("provider secret")));
         verifyNoInteractions(tasks);
         verify(bot,never()).ephemeral(any(),any(),any());
+    }
+
+    private com.meetodo.member.MemberRepository configureAdmin() throws Exception {
+        var members = mock(com.meetodo.member.MemberRepository.class);
+        edits.setManagement(new com.meetodo.member.AdminAuthorization("U1"), members);
+        var active = new com.meetodo.member.Member("전", "해찬", "개발", "U2");
+        ReflectionTestUtils.setField(active, "id", 2L);
+        var inactive = new com.meetodo.member.Member("김", "퇴사", "개발", "U3");
+        ReflectionTestUtils.setField(inactive, "id", 3L); inactive.deactivate();
+        when(members.findAll()).thenReturn(java.util.List.of(active, inactive));
+        when(members.findById(2L)).thenReturn(java.util.Optional.of(active));
+        when(members.findById(3L)).thenReturn(java.util.Optional.of(inactive));
+        var update = new com.slack.api.methods.response.views.ViewsUpdateResponse(); update.setOk(true);
+        when(client.viewsUpdate(any(com.slack.api.methods.request.views.ViewsUpdateRequest.class))).thenReturn(update);
+        return members;
+    }
+
+    @Test void adminManagementModalOffersReassignment() throws Exception {
+        // 관리자만 개인 관리 모달에서 담당자 변경 선택을 본다.
+        configureAdmin(); open("manage");
+        var request = ArgumentCaptor.forClass(ViewsOpenRequest.class); verify(client).viewsOpen(request.capture());
+        assertThat(request.getValue().getViewAsString()).contains("담당자 변경", "reassign");
+    }
+
+    @Test void managementSelectionUpdatesSameViewWithOnlyActiveMembers() throws Exception {
+        // 모달 작업 전환은 새 trigger 없이 같은 view를 갱신하고 비활성 팀원은 숨긴다.
+        configureAdmin(); open("manage"); edits.manage("V1", "U1", "reassign");
+        var request = ArgumentCaptor.forClass(com.slack.api.methods.request.views.ViewsUpdateRequest.class);
+        verify(client).viewsUpdate(request.capture());
+        assertThat(request.getValue().getViewId()).isEqualTo("V1");
+        assertThat(request.getValue().getViewAsString()).contains("전해찬", "담당자 변경").doesNotContain("김퇴사");
+        edits.submit("V1", "U1", true, "2"); verify(tasks).assignOrReassign(7L, 2L, "U1");
+    }
+
+    @Test void forgedNonAdminReassignmentSelectionIsRejected() throws Exception {
+        // 일반 사용자가 숨겨진 값을 직접 제출해도 모달을 재배정 화면으로 바꿀 수 없다.
+        open("manage"); edits.manage("V1", "U1", "reassign");
+        verify(client, never()).viewsUpdate(any(com.slack.api.methods.request.views.ViewsUpdateRequest.class));
+        edits.submit("V1", "U1", true, "2"); verify(tasks, never()).assignOrReassign(anyLong(), anyLong(), any());
+    }
+
+    @Test void forgedDirectReassignmentEntryIsRejected() throws Exception {
+        // 공유 overflow 값을 재배정으로 위조해도 관리자 검사 전에 어떤 모달도 열지 않는다.
+        open("reassign"); verify(client, never()).viewsOpen(any(ViewsOpenRequest.class));
+        verify(tasks, never()).assignOrReassign(anyLong(), anyLong(), any());
+    }
+
+    @Test void otherActorCannotChangePendingManagementView() throws Exception {
+        // 같은 view ID라도 원래 모달을 연 사용자가 아니면 전환을 거절한다.
+        configureAdmin(); open("manage"); edits.manage("V1", "UOTHER", "reassign");
+        verify(client, never()).viewsUpdate(any(com.slack.api.methods.request.views.ViewsUpdateRequest.class));
+    }
+
+    @Test void revokedAdminCannotSubmitPreviouslyOpenedReassignment() throws Exception {
+        // 모달을 연 뒤 관리자 설정이 바뀌면 제출 시 새 권한으로 거절한다.
+        var members = configureAdmin(); open("reassign");
+        edits.setManagement(new com.meetodo.member.AdminAuthorization(""), members);
+        edits.submit("V1", "U1", true, "2"); verify(tasks, never()).assignOrReassign(anyLong(), anyLong(), any());
+    }
+
+    @Test void deactivatedMemberCannotBeSubmittedFromOldModal() throws Exception {
+        // 활성 목록을 조작하거나 퇴사 후 남은 값을 보내도 공통 배정 함수까지 도달하지 않는다.
+        configureAdmin(); open("reassign"); edits.submit("V1", "U1", true, "3");
+        verify(tasks, never()).assignOrReassign(anyLong(), anyLong(), any());
+    }
+
+    @Test void malformedMemberValueCannotBeSubmitted() throws Exception {
+        // 공백 또는 비숫자 회원 ID를 임의 기본값으로 해석하지 않는다.
+        configureAdmin(); open("reassign"); edits.submit("V1", "U1", true, " ");
+        verify(tasks, never()).assignOrReassign(anyLong(), anyLong(), any());
+    }
+
+    @Test void completedTaskCannotOpenReassignmentModal() throws Exception {
+        // 완료 업무에는 관리자라도 재배정 화면을 열지 않는다.
+        configureAdmin(); Task done = Task.create("완료", null, null); done.changeStatus(TaskStatus.DONE);
+        when(tasks.authorizeMutation(7L,"U1")).thenReturn(TaskResponse.from(done));
+        open("reassign"); verify(client, never()).viewsOpen(any(ViewsOpenRequest.class));
+    }
+
+    @Test void expiredReassignmentModalCannotMutate() throws Exception {
+        // 재배정 모달도 기존 편집 모달과 같은 30분 수명을 지킨다.
+        configureAdmin(); open("reassign"); when(clock.instant()).thenReturn(Instant.parse("2026-11-13T00:30:00Z"));
+        edits.submit("V1", "U1", true, "2"); verify(tasks, never()).assignOrReassign(anyLong(), anyLong(), any());
+    }
+
+    @Test void duplicateReassignmentSubmissionMutatesOnce() throws Exception {
+        // Slack 제출 재전송은 서버 소유 view ID를 한 번만 소비한다.
+        configureAdmin(); open("reassign"); edits.submit("V1", "U1", true, "2"); edits.submit("V1", "U1", true, "2");
+        verify(tasks, times(1)).assignOrReassign(7L, 2L, "U1");
+    }
+
+    @Test void registeredSubmissionHandlerAcknowledgesBeforeReassignmentAndReadsSelectedOption() throws Exception {
+        // SDK 핸들러는 ACK 후 선택 옵션을 읽고 위조 metadata의 업무 ID를 무시한다.
+        configureAdmin(); open("reassign"); var app = mock(App.class); edits.register(app);
+        var handler = ArgumentCaptor.forClass(ViewSubmissionHandler.class); verify(app).viewSubmission(eq(SlackTaskEditService.CALLBACK), handler.capture());
+        var request = mock(ViewSubmissionRequest.class); var context = mock(ViewSubmissionContext.class);
+        var payload = new ViewSubmissionPayload(); var user = new ViewSubmissionPayload.User(); user.setId("U1"); payload.setUser(user);
+        var field = new ViewState.Value(); field.setType("static_select"); field.setValue("forged-plain-value");
+        var option = new ViewState.SelectedOption(); option.setValue("2"); field.setSelectedOption(option);
+        payload.setView(View.builder().id("V1").privateMetadata("999")
+                .state(ViewState.builder().values(Map.of(SlackTaskEditService.BLOCK, Map.of(SlackTaskEditService.ACTION, field))).build()).build());
+        when(request.getPayload()).thenReturn(payload); handler.getValue().apply(request, context);
+        var order = inOrder(context, tasks); order.verify(context).ack(); order.verify(tasks).assignOrReassign(7L, 2L, "U1");
+    }
+
+    @Test void registeredSubmissionHandlerRejectsPlainTextMemberField() throws Exception {
+        // 정적 선택 UI를 plain_text_input으로 위조해도 회원 ID로 받아들이지 않는다.
+        configureAdmin(); open("reassign"); var app = mock(App.class); edits.register(app);
+        var handler = ArgumentCaptor.forClass(ViewSubmissionHandler.class); verify(app).viewSubmission(eq(SlackTaskEditService.CALLBACK), handler.capture());
+        var request = mock(ViewSubmissionRequest.class); var context = mock(ViewSubmissionContext.class);
+        var payload = new ViewSubmissionPayload(); var user = new ViewSubmissionPayload.User(); user.setId("U1"); payload.setUser(user);
+        var field = new ViewState.Value(); field.setType("plain_text_input"); field.setValue("2");
+        payload.setView(View.builder().id("V1").state(ViewState.builder()
+                .values(Map.of(SlackTaskEditService.BLOCK, Map.of(SlackTaskEditService.ACTION, field))).build()).build());
+        when(request.getPayload()).thenReturn(payload); handler.getValue().apply(request, context);
+        verify(context).ack(); verify(tasks, never()).assignOrReassign(anyLong(), anyLong(), any());
+    }
+
+    @Test void reassignmentSelectorAcceptsExactlyHundredActiveMembers() throws Exception {
+        // Slack 정적 선택 상한인 활성 팀원 100명은 전부 선택지에 포함한다.
+        var members = configureAdmin();
+        when(members.findAll()).thenReturn(java.util.stream.LongStream.rangeClosed(1, 100).mapToObj(id -> {
+            var member = new com.meetodo.member.Member("김", "팀원" + id, "개발", "U" + id);
+            ReflectionTestUtils.setField(member, "id", id); return member;
+        }).toList());
+        open("reassign"); var request = ArgumentCaptor.forClass(ViewsOpenRequest.class); verify(client).viewsOpen(request.capture());
+        var json = com.google.gson.JsonParser.parseString(request.getValue().getViewAsString()).getAsJsonObject();
+        assertThat(json.getAsJsonArray("blocks").get(0).getAsJsonObject().getAsJsonObject("element").getAsJsonArray("options")).hasSize(100);
+    }
+
+    @Test void reassignmentSelectorRejectsMoreThanHundredRatherThanHidingMembers() throws Exception {
+        // 상한을 넘는 팀원은 일부만 잘라 제시하지 않고 요청자에게 안전한 안내를 보낸다.
+        var members = configureAdmin();
+        var member = new com.meetodo.member.Member("김", "팀원", "개발", "U2"); ReflectionTestUtils.setField(member, "id", 2L);
+        when(members.findAll()).thenReturn(java.util.Collections.nCopies(101, member));
+        open("reassign"); verify(client, never()).viewsOpen(any(ViewsOpenRequest.class));
+        verify(bot).ephemeral(eq("C1"), eq("U1"), anyString());
     }
 
 }

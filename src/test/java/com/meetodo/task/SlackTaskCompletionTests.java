@@ -62,13 +62,23 @@ class SlackTaskCompletionTests {
         assertThat(service.completeFromSlack(1L, "W123ABC").completedBySlackUserId()).isEqualTo("W123ABC");
     }
 
-    // 이미 완료된 버튼을 다른 사용자가 눌러도 첫 완료자와 시각이 유지된다.
+    // 담당자가 완료 버튼을 다시 눌러도 첫 완료자와 시각이 유지된다.
     @Test void repeatedCompletionPreservesFirstActorAndTime() {
         var task = task(new Member("전", "해찬", "백엔드팀", "U123ABC"));
         task.changeStatus(TaskStatus.DONE, "U123ABC", Instant.EPOCH);
-        var response = service.completeFromSlack(1L, "U456DEF");
+        var response = service.completeFromSlack(1L, "U123ABC");
         assertThat(response.completedBySlackUserId()).isEqualTo("U123ABC");
         assertThat(response.completedAt()).isEqualTo(Instant.EPOCH);
+        verify(tasks, never()).save(any());
+    }
+
+    // 이미 완료되어도 담당자가 아닌 사용자는 성공 응답을 받지 못한다.
+    @Test void repeatedCompletionStillRequiresOwner() {
+        var task = task(new Member("전", "해찬", "백엔드팀", "U123ABC"));
+        task.changeStatus(TaskStatus.DONE, "U123ABC", Instant.EPOCH);
+        assertThatThrownBy(() -> service.completeFromSlack(1L, "U456DEF"))
+                .isInstanceOf(TaskCompletionForbiddenException.class);
+        assertThat(task.getCompletedAt()).isEqualTo(Instant.EPOCH);
         verify(tasks, never()).save(any());
     }
 

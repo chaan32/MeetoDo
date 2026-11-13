@@ -249,4 +249,96 @@ class SlackDirectMessageTests {
         });
     }
 
+    private TaskReassignedEvent reassign(Task task) {
+        task.assign(new Member("새", "담당자", "개발", "UNEW"), "UADMIN", Instant.EPOCH);
+        return new TaskReassignedEvent(task.getId(), 1L, "UOLD", 2L, "UADMIN");
+    }
+
+    @Test void reassignmentSendsNewOwnerAndOldOwnerDistinctPrivateMessages() throws Exception {
+        // 새 담당자는 완료 가능한 배정 DM, 이전 담당자는 버튼 없는 인계 안내를 받는다.
+        enable(); Task task = add(7, "UOLD", "EXISTING"); bot.send(message);
+        bot.reassigned(reassign(task));
+        var requests = ArgumentCaptor.forClass(ChatPostMessageRequest.class); verify(client, times(3)).chatPostMessage(requests.capture());
+        var newOwner = requests.getAllValues().stream().filter(r -> r.getChannel().equals("DUNEW")).findFirst().orElseThrow();
+        var previousOwner = requests.getAllValues().stream().filter(r -> r.getChannel().equals("DUOLD")).findFirst().orElseThrow();
+        assertThat(newOwner.getText()).contains("📝 할 일이 배정됐어요 (변경: <@UADMIN>)", "할 일 7");
+        assertThat(newOwner.getBlocksAsString()).contains(SlackBotRenderer.COMPLETE_ACTION);
+        assertThat(previousOwner.getText()).contains("할 일이 다른 담당자에게 넘어갔어요", "할 일 7");
+        assertThat(previousOwner.getBlocksAsString()).doesNotContain(SlackBotRenderer.COMPLETE_ACTION, SlackBotRenderer.TASK_MENU_ACTION);
+        assertThat(stored.stream().filter(r -> r.getMessageType() == SlackMessageReference.MessageType.DM))
+                .extracting(SlackMessageReference::getNotificationKind)
+                .containsExactly(SlackMessageReference.NotificationKind.REASSIGNMENT, SlackMessageReference.NotificationKind.HANDOFF);
+        assertThat(stored.getLast().getNotificationActorSlackUserId()).isEqualTo("UADMIN");
+    }
+
+    @Test void reassignmentDmFailureDoesNotSkipPreviousOwnerOrRollback() throws Exception {
+        // 새 담당자의 DM 실패를 기록한 뒤에도 이전 담당자에게 인계 안내를 계속 보낸다.
+        enable(); Task task = add(7, "UOLD", "EXISTING");
+        when(client.conversationsOpen(any(ConversationsOpenRequest.class))).thenAnswer(call -> {
+            ConversationsOpenRequest request = call.getArgument(0); var response = new ConversationsOpenResponse();
+            if (request.getUsers().contains("UNEW")) { response.setError("missing_scope"); return response; }
+            var channel = new Conversation(); channel.setId("DUOLD"); response.setOk(true); response.setChannel(channel); return response;
+        });
+        assertThatCode(() -> bot.reassigned(reassign(task))).doesNotThrowAnyException();
+        assertThat(task.getAssignee().getSlackUserId()).isEqualTo("UNEW");
+        assertThat(stored).hasSize(2);
+        assertThat(stored.getFirst().getErrorCode()).isEqualTo("missing_scope");
+        assertThat(stored.getFirst().getNotificationKind()).isEqualTo(SlackMessageReference.NotificationKind.REASSIGNMENT);
+        assertThat(stored.getLast().getDeliveryStatus()).isEqualTo(SlackMessageReference.DeliveryStatus.SENT);
+        assertThat(stored.getLast().getNotificationKind()).isEqualTo(SlackMessageReference.NotificationKind.HANDOFF);
+    }
+
+    @Test void refreshRetainsPersistedReassignmentPurposeAndActor() throws Exception {
+        // 나중에 제목이나 완료 상태가 변해도 각 DM은 저장한 재배정·인계 의미와 변경자를 유지한다.
+        enable(); Task task = add(7, "UOLD", "EXISTING"); bot.reassigned(reassign(task));
+        task.edit("재조회 제목", LocalDate.of(2026, 12, 1)); clearInvocations(client);
+        bot.refreshTask(7L);
+        var updates = ArgumentCaptor.forClass(ChatUpdateRequest.class); verify(client, times(2)).chatUpdate(updates.capture());
+        assertThat(updates.getAllValues().stream().filter(r -> r.getChannel().equals("DUNEW")).findFirst().orElseThrow().getText())
+                .contains("변경: <@UADMIN>", "재조회 제목");
+        var old = updates.getAllValues().stream().filter(r -> r.getChannel().equals("DUOLD")).findFirst().orElseThrow();
+        assertThat(old.getText()).contains("할 일이 다른 담당자에게 넘어갔어요", "재조회 제목");
+        assertThat(old.getBlocksAsString()).doesNotContain(SlackBotRenderer.COMPLETE_ACTION, SlackBotRenderer.TASK_MENU_ACTION);
+    }
+
+    @Test void oldAssignmentDmRefreshRemovesTransferredTasksCompletionControl() throws Exception {
+        // 이전에 보낸 최초 배정 DM도 새 담당자 상태를 표시하고 이전 담당자용 버튼은 제거한다.
+        enable(); Task task = add(7, "UOLD", "CREATED"); bot.send(message); bot.reassigned(reassign(task));
+        var updates = ArgumentCaptor.forClass(ChatUpdateRequest.class); verify(client, times(2)).chatUpdate(updates.capture());
+        var old = updates.getAllValues().stream().filter(r -> r.getChannel().equals("DUOLD")).findFirst().orElseThrow();
+        assertThat(old.getText()).contains("<@UNEW>");
+        assertThat(old.getBlocksAsString()).doesNotContain(SlackBotRenderer.COMPLETE_ACTION, SlackBotRenderer.TASK_MENU_ACTION);
+    }
+
+    @Test void disabledReassignmentDmStillRefreshesExistingChannel() throws Exception {
+        // DM 비활성 상태에서도 채널은 DB의 새 담당자로 갱신한다.
+        Task task = add(7, "UOLD", "EXISTING"); bot.send(message); bot.reassigned(reassign(task));
+        verify(client).chatUpdate(any(ChatUpdateRequest.class));
+        verify(client, never()).conversationsOpen(any(ConversationsOpenRequest.class));
+    }
+
+    @Test void fakePreviousSlackIdNeverReceivesHandoffDm() throws Exception {
+        // 개발용 이전 담당자 ID에는 인계 DM을 시도하지 않는다.
+        enable(); Task task = add(7, "UNEW", "EXISTING");
+        bot.reassigned(new TaskReassignedEvent(7L, 1L, "U-OLD", 2L, "UADMIN"));
+        var requests = ArgumentCaptor.forClass(ConversationsOpenRequest.class); verify(client).conversationsOpen(requests.capture());
+        assertThat(requests.getValue().getUsers()).containsExactly("UNEW");
+    }
+
+    @Test void forgedOtherUserCannotUsePrivateDmReference() throws Exception {
+        // 다른 사용자 DM의 좌표를 위조한 완료 요청은 공통 서비스 호출 전에 차단한다.
+        enable(); add(7, "UOLD", "CREATED"); bot.send(message);
+        bot.complete("DUOLD", "2.1", "UATTACK", "7"); verifyNoInteractions(taskService);
+    }
+
+    @Test void staleOldOwnerCompletionIsRejectedWithPrivatePolicyMessage() throws Exception {
+        // 이전 담당자의 오래된 버튼은 DB 권한 검사 오류를 요청자 전용 안내로 반환한다.
+        enable(); Task task = add(7, "UOLD", "CREATED"); bot.send(message); reassign(task);
+        when(taskService.completeFromSlack(7L, "UOLD")).thenThrow(new TaskCompletionForbiddenException());
+        bot.complete("DUOLD", "2.1", "UOLD", "7");
+        var request = ArgumentCaptor.forClass(ChatPostEphemeralRequest.class); verify(client).chatPostEphemeral(request.capture());
+        assertThat(request.getValue().getUser()).isEqualTo("UOLD");
+        assertThat(request.getValue().getText()).isEqualTo("담당자만 완료할 수 있어요");
+    }
+
 }

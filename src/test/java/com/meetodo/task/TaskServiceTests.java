@@ -175,4 +175,24 @@ class TaskServiceTests {
         org.springframework.test.util.ReflectionTestUtils.setField(meeting, "id", id);
         return meeting;
     }
+    // 새 업무에만 도구 날짜 경고를 저장한다.
+    @Test void newToolTaskStoresDueDateWarning() {
+        when(taskRepository.save(any(Task.class))).thenAnswer(invocation ->
+                ((Task) invocation.getArgument(0)).withId(1L, Instant.EPOCH));
+        var result = taskService.createFromToolIdempotently("날짜 확인", null, null, null, null, "날짜 확인 필요");
+        assertThat(result.created()).isTrue();
+        assertThat(result.task().dueDateWarning()).isEqualTo("날짜 확인 필요");
+    }
+
+    // 기존 업무 재사용 시 새 회의의 경고로 원래 경고를 덮어쓰지 않는다.
+    @Test void reusedToolTaskPreservesItsOwnDueDateWarning() {
+        Task existing = Task.create("날짜 확인", null, null).withId(1L, Instant.EPOCH);
+        existing.setDueDateWarning("기존 경고");
+        when(taskRepository.findAllByAssigneeIsNullAndStatusOrderByCreatedAtDesc(TaskStatus.TODO)).thenReturn(List.of(existing));
+        var result = taskService.createFromToolIdempotently("날짜 확인", null, null, null, null, "새 경고");
+        assertThat(result.created()).isFalse();
+        assertThat(result.task().dueDateWarning()).isEqualTo("기존 경고");
+        verify(taskRepository, never()).save(any(Task.class));
+    }
+
 }

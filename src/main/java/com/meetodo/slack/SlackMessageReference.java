@@ -8,6 +8,7 @@ import java.time.LocalDate;
 @Table(name = "slack_message_references", uniqueConstraints = @UniqueConstraint(name = "uk_slack_message_channel_ts", columnNames = {"channel_id", "message_ts"}))
 public class SlackMessageReference {
     public enum MessageType { CHANNEL, DM }
+    public enum NotificationKind { ASSIGNMENT, REASSIGNMENT, HANDOFF }
     public enum DeliveryStatus { SENT, FAILED }
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;
     @Column(name = "channel_id", length = 80) private String channelId;
@@ -22,6 +23,14 @@ public class SlackMessageReference {
     private DeliveryStatus deliveryStatus = DeliveryStatus.SENT;
     @Column(name = "error_code", length = 80) private String errorCode;
     @Column(name = "permalink", length = 2048) private String permalink;
+    @Enumerated(EnumType.STRING) @Column(name = "notification_kind", nullable = false, length = 20)
+    private NotificationKind notificationKind = NotificationKind.ASSIGNMENT;
+    @Column(name = "notification_actor_slack_user_id", length = 80) private String notificationActorSlackUserId;
+    public NotificationKind getNotificationKind() { return notificationKind; }
+    public String getNotificationActorSlackUserId() { return notificationActorSlackUserId; }
+    public SlackMessageReference notification(NotificationKind kind, String actor) {
+        this.notificationKind = kind; this.notificationActorSlackUserId = actor; return this;
+    }
     protected SlackMessageReference() { }
     public SlackMessageReference(String channelId, String messageTs, Meeting meeting, LocalDate digestDate, String taskIds) {
         this.channelId = channelId; this.messageTs = messageTs; this.meeting = meeting;

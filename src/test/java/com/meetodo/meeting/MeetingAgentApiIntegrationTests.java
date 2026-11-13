@@ -86,7 +86,7 @@ class MeetingAgentApiIntegrationTests {
         ChatResponse[] responses = new ChatResponse[]{
                 toolResponse("findMember", "{\"name\":\"민수\"}"),
                 toolResponse("findTasks", "{\"assignee\":\"민수\",\"title\":\"로그인 API 수정\"}"),
-                toolResponse("createTask", "{\"title\":\"로그인 API 수정\",\"assignee\":\"민수\",\"dueDate\":\"2026-11-20\"}"),
+                toolResponse("createTask", "{\"title\":\"로그인 API 수정\",\"assignee\":\"민수\",\"dueDate\":\"다음 주 금요일\"}"),
                 textResponse("로그인 API 수정 작업을 등록했습니다.")};
         when(model.call(any(org.springframework.ai.chat.prompt.Prompt.class))).thenReturn(responses[0], java.util.Arrays.copyOfRange(responses, 1, responses.length));
 

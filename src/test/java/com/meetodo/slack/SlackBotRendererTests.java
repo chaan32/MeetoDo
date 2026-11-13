@@ -10,6 +10,11 @@ import org.springframework.test.util.ReflectionTestUtils;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class SlackBotRendererTests {
+    @Test void sharedMessageOffersPrivateManagementWithoutExposingReassignment() {
+        // 공유 메시지는 공통 진입점만 제공하고 관리자 전용 재배정을 노출하지 않는다.
+        String json = renderer.render(message, List.of(task("U123ABC"))).blocksJson();
+        assertThat(json).contains("관리…", "manage:7").doesNotContain("reassign:7");
+    }
     private final SlackBotRenderer renderer = new SlackBotRenderer();
     private final NotificationMessage message = new NotificationMessage(1L, "회의 완료", List.of("서버 집계"), List.of(), "회의 1");
     private Task task(String slackId) {
@@ -171,6 +176,28 @@ class SlackBotRendererTests {
         var blocks=new SlackBotRenderer().taskBlocks(task);
         var text=(java.util.Map<?,?>)blocks.getFirst().get("text");
         assertThat(text.get("text").toString()).hasSizeLessThanOrEqualTo(3000);
+    }
+
+    @Test void assignedTaskKeepsPersistedDateWarningInChannelAndHome() {
+        // 담당자가 지정되어도 날짜 해석 실패 경고는 채널과 Home 양쪽에 남는다.
+        Task task = task("U123ABC"); task.setDueDateWarning("마감일 표현을 해석하지 못해 기한 없이 등록했습니다.");
+        assertThat(renderer.render(message, List.of(task)).text()).contains("마감일 표현을 해석하지 못해");
+        assertThat(new com.google.gson.Gson().toJson(renderer.taskBlocks(task))).contains("마감일 표현을 해석하지 못해");
+    }
+
+    @Test void assignmentRemovesOnlyOwnerWarningAndPreservesDateWarning() {
+        // 사후 배정은 미정 사유만 지우고 독립적인 마감일 경고는 유지한다.
+        Task task = unresolved("AMBIGUOUS", 2); task.setDueDateWarning("날짜 확인 필요");
+        task.assign(new Member("전", "해찬", "개발", "U123ABC"), "UADMIN", java.time.Instant.EPOCH);
+        String text = renderer.render(message, List.of(task)).text();
+        assertThat(text).contains("날짜 확인 필요").doesNotContain("동명이인 확인 필요");
+    }
+
+    @Test void meetingDateWarningDoesNotRepeatPersistedDateWarning() {
+        // 회의 메타데이터에 같은 날짜 경고가 있어도 한 번만 출력한다.
+        Task task = unresolved("AMBIGUOUS", 2); task.setDueDateWarning("날짜 확인 필요");
+        var detail = com.meetodo.meeting.dto.MeetingTaskResponse.from(task, "CREATED", 1, null, null);
+        assertThat(renderer.render(message, List.of(task), java.util.Map.of(7L, detail)).text()).containsOnlyOnce("날짜 확인 필요");
     }
 
 }

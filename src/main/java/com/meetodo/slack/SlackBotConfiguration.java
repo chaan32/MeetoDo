@@ -73,9 +73,10 @@ public class SlackBotConfiguration {
             com.meetodo.member.MemberService members, com.meetodo.member.AdminAuthorization admins, Clock clock, SlackHomeService homes) {
         return new SlackMemberManagementService(client, members, admins, clock, homes);
     }
-    @Bean SlackTaskEditService slackTaskEditService(MethodsClient client, SlackBotService bot, TaskService tasks, Clock clock, SlackHomeService homes) {
+    @Bean SlackTaskEditService slackTaskEditService(MethodsClient client, SlackBotService bot, TaskService tasks, Clock clock, SlackHomeService homes, com.meetodo.member.AdminAuthorization admins, com.meetodo.member.MemberRepository members) {
         var edits = new SlackTaskEditService(client, bot, tasks, clock);
         edits.setHomes(homes);
+        edits.setManagement(admins, members);
         return edits;
     }
     @Bean App slackBoltApp(Environment env, SlackBotService service, ObjectProvider<SlackMeetingInputService> inputs, SlackTaskEditService edits, SlackHomeService homes, SlackMemberManagementService memberManagement) {

@@ -26,7 +26,7 @@ public class DailyDigestMessageFactory {
         String owner = task.getAssignee() == null ? "담당자 미정"
                 : task.getAssignee().getFullName() + "(" + task.getAssignee().getTeam() + ")";
         String bucket = task.getDueDate().isBefore(today) ? "⏰ 마감 지남" : task.getDueDate().equals(today) ? "📌 오늘 마감" : "📅 3일 이내 마감";
-        String warning = task.getAssignee() != null || task.getUnresolvedAssignee() == null ? "" : task.getUnresolvedAssignee().warning();
+        String warning = task.getWarning();
         return (owner + " · " + bucket + " · " + task.getTitle() + " · " + task.getDueDate()
                 + (warning.isBlank() ? "" : " · ⚠ " + warning)).replaceAll("[\\r\\n]+", " ");
     }

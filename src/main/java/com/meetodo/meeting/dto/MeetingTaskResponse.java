@@ -8,7 +8,14 @@ public record MeetingTaskResponse(Long taskId, String title, String assigneeName
                                   String assigneeTeam, String resultType, long mentionCount, String warning,
                                   String unassignedReason, UnresolvedAssignee unresolvedAssignee,
                                   com.meetodo.task.TaskStatus status, String assigneeSlackUserId,
-                                  String completedBySlackUserId, java.time.Instant completedAt, boolean deleted) {
+                                  String completedBySlackUserId, java.time.Instant completedAt, boolean deleted, String dueDateWarning) {
+    public MeetingTaskResponse(Long taskId, String title, String assigneeName, LocalDate dueDate,
+            String assigneeTeam, String resultType, long mentionCount, String warning, String unassignedReason,
+            UnresolvedAssignee detail, com.meetodo.task.TaskStatus status, String assigneeSlackUserId,
+            String completedBySlackUserId, java.time.Instant completedAt, boolean deleted) {
+        this(taskId,title,assigneeName,dueDate,assigneeTeam,resultType,mentionCount,warning,unassignedReason,detail,
+                status,assigneeSlackUserId,completedBySlackUserId,completedAt,deleted,null);
+    }
     public MeetingTaskResponse(Long taskId, String title, String assigneeName, LocalDate dueDate,
             String assigneeTeam, String resultType, long mentionCount, String warning, String unassignedReason,
             UnresolvedAssignee detail, com.meetodo.task.TaskStatus status, String assigneeSlackUserId,
@@ -34,10 +41,12 @@ public record MeetingTaskResponse(Long taskId, String title, String assigneeName
                                            String reason, UnresolvedAssignee detail) {
         if (task.getAssignee() != null) { detail = null; warning = null; reason = null; }
         else if (detail != null) { warning = detail.warning(); reason = detail.reason(); }
+        if (task.getDueDateWarning() != null)
+            warning = warning == null || warning.isBlank() ? task.getDueDateWarning() : warning + " · " + task.getDueDateWarning();
         return new MeetingTaskResponse(task.getId(), task.getTitle(),
                 task.getAssignee() == null ? null : task.getAssignee().getName(), task.getDueDate(),
                 task.getAssignee() == null ? null : task.getAssignee().getTeam(), resultType, mentionCount, warning, reason, detail, task.getStatus(),
                 task.getAssignee() == null ? null : task.getAssignee().getSlackUserId(),
-                task.getCompletedBySlackUserId(), task.getCompletedAt(), task.isDeleted());
+                task.getCompletedBySlackUserId(), task.getCompletedAt(), task.isDeleted(), task.getDueDateWarning());
     }
 }

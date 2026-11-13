@@ -92,11 +92,18 @@ public class TaskService {
     }
 
     public ToolTaskResult createFromToolIdempotently(String title, Member assignee, LocalDate dueDate, Meeting meeting, UnresolvedAssignee unresolved) {
+        return createFromToolIdempotently(title, assignee, dueDate, meeting, unresolved, null);
+    }
+
+    public ToolTaskResult createFromToolIdempotently(String title, Member assignee, LocalDate dueDate, Meeting meeting,
+                                                    UnresolvedAssignee unresolved, String dueDateWarning) {
         if (assignee != null && !assignee.isActive()) throw new ResourceNotFoundException("MEMBER_NOT_FOUND", "Active assignee was not found.");
         String normalizedTitle = TaskTitles.validateAndClean(title);
         Task existing = findExistingTodo(normalizedTitle, assignee);
         if (existing != null) return new ToolTaskResult(TaskResponse.from(existing), false);
-        Task saved = tasks.save(Task.create(normalizedTitle, assignee, dueDate, meeting, unresolved));
+        Task task = Task.create(normalizedTitle, assignee, dueDate, meeting, unresolved);
+        task.setDueDateWarning(dueDateWarning);
+        Task saved = tasks.save(task);
         events.publishEvent(new TaskCreatedEvent(saved.getId()));
         return new ToolTaskResult(TaskResponse.from(saved), true);
     }
@@ -153,6 +160,7 @@ public class TaskService {
     private TaskResponse mutate(Long id, String title, boolean dueDateProvided, LocalDate dueDate, TaskStatus status, String actor) {
         validateActor(actor);
         Task task = lockedTask(id);
+        if (status == TaskStatus.DONE) requireCompletionPermission(task, actor);
         requirePermission(task, actor);
         String nextTitle = title == null ? task.getTitle() : TaskTitles.validateAndClean(title);
         LocalDate nextDate = dueDateProvided ? dueDate : task.getDueDate();
@@ -162,6 +170,7 @@ public class TaskService {
         boolean titleChanged = !java.util.Objects.equals(nextTitle, task.getTitle());
         boolean dateChanged = !java.util.Objects.equals(nextDate, task.getDueDate());
         boolean statusChanged = nextStatus != task.getStatus();
+        boolean warningCleared = dueDateProvided && task.getDueDateWarning() != null;
         if (nextStatus == TaskStatus.TODO && (titleChanged || statusChanged)) {
             Task duplicate = findExistingTodo(nextTitle, task.getAssignee(), task.getId());
             if (duplicate != null) throw new DuplicateTaskException(duplicate.getId());
@@ -169,7 +178,9 @@ public class TaskService {
         if (titleChanged) record(task, "TITLE_CHANGED", task.getTitle(), nextTitle, actor);
         if (dateChanged) record(task, "DUE_DATE_CHANGED", text(task.getDueDate()), text(nextDate), actor);
         if (statusChanged) record(task, "STATUS_CHANGED", task.getStatus().name(), nextStatus.name(), actor);
-        if (titleChanged || dateChanged || statusChanged) {
+        if (warningCleared) record(task, "DUE_DATE_WARNING_CLEARED", task.getDueDateWarning(), "MANUAL_DUE_DATE", actor);
+        if (titleChanged || dateChanged || statusChanged || warningCleared) {
+            if (warningCleared) task.setDueDateWarning(null);
             task.edit(nextTitle, nextDate);
             task.changeStatus(nextStatus, actor, clock.instant());
             tasks.save(task);
@@ -236,16 +247,7 @@ public class TaskService {
         Task task = lockedTask(id);
         if (task.getAssignee() != null || task.getStatus() == TaskStatus.DONE)
             return TaskResponse.from(task, countsFor(List.of(task)).getOrDefault(task.getId(), 0L));
-        if (memberId == null || memberId <= 0)
-            throw new TaskAssignmentException("VALIDATION_ERROR", "assigneeId must be positive.");
-        Member member = resolveAssignee(memberId, null);
-        UnresolvedAssignee snapshot = task.getUnresolvedAssignee();
-        if (snapshot != null && ("AMBIGUOUS".equals(snapshot.reason()) || "TEAM_MISMATCH".equals(snapshot.reason()))
-                && snapshot.candidates().stream().noneMatch(candidate -> memberId.equals(candidate.id())))
-            throw new TaskAssignmentException("ASSIGNEE_NOT_CANDIDATE", "저장된 후보 중에서 담당자를 선택하세요.");
-        Task duplicate = findExistingTodo(task.getTitle(), member);
-        if (duplicate != null && !duplicate.getId().equals(task.getId()))
-            throw new DuplicateTaskException(duplicate.getId());
+        Member member = assignmentMember(task, memberId);
         record(task, "ASSIGNED", null, member.getId().toString(), actorSlackUserId);
         task.assign(member, actorSlackUserId, clock.instant());
         tasks.save(task);
@@ -253,15 +255,55 @@ public class TaskService {
         return TaskResponse.from(task, countsFor(List.of(task)).getOrDefault(task.getId(), 0L));
     }
 
+    public TaskResponse assignOrReassign(Long id, Long memberId, String actorSlackUserId) {
+        validateActor(actorSlackUserId);
+        Task task = lockedTask(id);
+        if (task.getStatus() != TaskStatus.TODO)
+            throw new TaskMutationException(org.springframework.http.HttpStatus.CONFLICT,
+                    "TASK_NOT_ASSIGNABLE", "미완료 업무만 담당자를 지정할 수 있어요.");
+        Member previous = task.getAssignee();
+        if (previous == null) return assign(id, memberId, actorSlackUserId);
+        if (!admins.isAdmin(actorSlackUserId))
+            throw new TaskMutationException(org.springframework.http.HttpStatus.FORBIDDEN,
+                    "TASK_REASSIGNMENT_FORBIDDEN", "관리자만 담당자를 변경할 수 있어요.");
+        if (memberId == null || memberId <= 0)
+            throw new TaskAssignmentException("VALIDATION_ERROR", "assigneeId must be positive.");
+        Member member = resolveAssignee(memberId, null);
+        if (previous.getId().equals(memberId)) return response(task);
+        Task duplicate = findExistingTodo(task.getTitle(), member, task.getId());
+        if (duplicate != null) throw new DuplicateTaskException(duplicate.getId());
+        record(task, "REASSIGNED", previous.getId().toString(), memberId.toString(), actorSlackUserId);
+        task.assign(member, actorSlackUserId, clock.instant());
+        tasks.save(task);
+        events.publishEvent(new TaskReassignedEvent(task.getId(), previous.getId(), previous.getSlackUserId(),
+                memberId, actorSlackUserId));
+        return response(task);
+    }
+
+    private Member assignmentMember(Task task, Long memberId) {
+        if (memberId == null || memberId <= 0)
+            throw new TaskAssignmentException("VALIDATION_ERROR", "assigneeId must be positive.");
+        Member member = resolveAssignee(memberId, null);
+        UnresolvedAssignee snapshot = task.getUnresolvedAssignee();
+        if (snapshot != null && ("AMBIGUOUS".equals(snapshot.reason()) || "TEAM_MISMATCH".equals(snapshot.reason()))
+                && snapshot.candidates().stream().noneMatch(candidate -> memberId.equals(candidate.id())))
+            throw new TaskAssignmentException("ASSIGNEE_NOT_CANDIDATE", "저장된 후보 중에서 담당자를 선택하세요.");
+        Task duplicate = findExistingTodo(task.getTitle(), member, task.getId());
+        if (duplicate != null) throw new DuplicateTaskException(duplicate.getId());
+        return member;
+    }
+
+    private void requireCompletionPermission(Task task, String actor) {
+        if (task.getAssignee() != null && !actor.equals(task.getAssignee().getSlackUserId()))
+            throw new TaskCompletionForbiddenException();
+    }
+
     public TaskResponse completeFromSlack(Long id, String actorSlackUserId) {
         if (actorSlackUserId == null || !actorSlackUserId.matches("[UW][A-Z0-9]{1,79}"))
             throw new IllegalArgumentException("A valid Slack user ID is required");
         Task task = lockedTask(id);
-        if (task.getStatus() != TaskStatus.DONE) {
-            if (task.getAssignee() != null && !actorSlackUserId.equals(task.getAssignee().getSlackUserId()) && !admins.isAdmin(actorSlackUserId))
-                throw new TaskCompletionForbiddenException();
-            changeStatus(task, TaskStatus.DONE, actorSlackUserId);
-        }
+        requireCompletionPermission(task, actorSlackUserId);
+        changeStatus(task, TaskStatus.DONE, actorSlackUserId);
         return TaskResponse.from(task, countsFor(List.of(task)).getOrDefault(task.getId(), 0L));
     }
 

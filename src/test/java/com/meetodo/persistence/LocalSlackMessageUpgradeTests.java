@@ -66,6 +66,8 @@ class LocalSlackMessageUpgradeTests {
         try (var connection = connect(url)) {
             org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(connection,
                     new org.springframework.core.io.ClassPathResource("db/local/slack-message-dm-upgrade.sql"));
+            org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(connection,
+                    new org.springframework.core.io.ClassPathResource("db/local/reassignment-messages-upgrade.sql"));
         }
         var registry = new StandardServiceRegistryBuilder()
                 .applySetting("hibernate.connection.driver_class", "org.h2.Driver")

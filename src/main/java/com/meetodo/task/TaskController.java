@@ -42,7 +42,7 @@ public class TaskController {
     public TaskResponse assign(@PathVariable Long id,
                                @Valid @RequestBody com.meetodo.task.dto.AssignTaskRequest request,
                                @org.springframework.web.bind.annotation.RequestHeader(value = "X-Slack-User-Id", required = false) String actor) {
-        return taskService.assign(id, request.assigneeId(), actor);
+        return taskService.assignOrReassign(id, request.assigneeId(), actor);
     }
 
     @PatchMapping("/{id}")

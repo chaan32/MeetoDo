@@ -55,7 +55,7 @@ class PostgresMigrationTests {
         when(clock.instant()).thenReturn(fixed.instant());
     }
 
-    // 검증: 빈 PostgreSQL에 V1/V2/V3/V4/V5/V6/V7를 적용하고 Hibernate가 엔티티 스키마를 검증한다.
+    // 검증: 빈 PostgreSQL에 V1/V2/V3/V4/V5/V6/V7/V8을 적용하고 Hibernate가 엔티티 스키마를 검증한다.
     @Test void appliesInitialMigrationAndValidatesEntities() {
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '1'", String.class)).isEqualTo("1");
         assertThat(jdbc.queryForList("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'", String.class))
@@ -66,6 +66,7 @@ class PostgresMigrationTests {
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '5'", String.class)).isEqualTo("5");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '6'", String.class)).isEqualTo("6");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '7'", String.class)).isEqualTo("7");
+        assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '8'", String.class)).isEqualTo("8");
     }
 
     @Test void memberActiveDefaultsToTrueForExistingInsertContract() {
@@ -422,6 +423,72 @@ class PostgresMigrationTests {
         assertThat(jdbc.queryForMap("SELECT channel_id, message_ts, task_ids, message_type, delivery_status FROM slack_v2_upgrade.slack_message_references"))
                 .containsEntry("channel_id", "C123ABC").containsEntry("message_ts", "1.000001")
                 .containsEntry("task_ids", "[1,2]").containsEntry("message_type", "CHANNEL").containsEntry("delivery_status", "SENT");
+    }
+
+    // 날짜 경고는 실제 PostgreSQL 컬럼에 저장되고 새 조회에서도 보존된다.
+    @Test void dueDateWarningRoundTripsThroughPostgres() {
+        Task task = Task.create("날짜 확인", null, null);
+        task.setDueDateWarning("마감일을 확인해 주세요.");
+        Long id = tasks.saveAndFlush(task).getId();
+        assertThat(jdbc.queryForObject("SELECT due_date_warning FROM tasks WHERE id=?", String.class, id))
+                .isEqualTo("마감일을 확인해 주세요.");
+        assertThat(tasks.findById(id).orElseThrow().getDueDateWarning()).isEqualTo("마감일을 확인해 주세요.");
+    }
+
+    // 알림 종류를 생략하는 기존 INSERT도 ASSIGNMENT 기본값과 null 변경자를 유지한다.
+    @Test void legacyReferenceInsertKeepsAssignmentNotificationDefault() {
+        jdbc.update("INSERT INTO slack_message_references(channel_id,message_ts,task_ids) VALUES ('CLEGACY','8.000001','[1]')");
+        assertThat(jdbc.queryForMap("SELECT notification_kind,notification_actor_slack_user_id FROM slack_message_references"))
+                .containsEntry("notification_kind", "ASSIGNMENT")
+                .containsEntry("notification_actor_slack_user_id", null);
+    }
+
+    // 새 담당자 DM의 재지정 종류와 변경자를 JPA와 실제 PostgreSQL 사이에서 보존한다.
+    @Test void reassignmentNotificationMetadataRoundTripsThroughPostgres() {
+        messageReferences.saveAndFlush(SlackMessageReference.dm("DNEXT1", "8.000002", null, "[7]", "UNEXT1",
+                SlackMessageReference.DeliveryStatus.SENT, null, null)
+                .notification(SlackMessageReference.NotificationKind.REASSIGNMENT, "UADMIN1"));
+        var reference = messageReferences.findByChannelIdAndMessageTs("DNEXT1", "8.000002").orElseThrow();
+        assertThat(reference.getNotificationKind()).isEqualTo(SlackMessageReference.NotificationKind.REASSIGNMENT);
+        assertThat(reference.getNotificationActorSlackUserId()).isEqualTo("UADMIN1");
+        assertThat(jdbc.queryForMap("SELECT notification_kind,notification_actor_slack_user_id FROM slack_message_references"))
+                .containsEntry("notification_kind", "REASSIGNMENT")
+                .containsEntry("notification_actor_slack_user_id", "UADMIN1");
+    }
+
+    // 이전 담당자의 인계 알림도 종류·변경자·대상자를 구별해 저장한다.
+    @Test void handoffNotificationMetadataRoundTripsThroughPostgres() {
+        messageReferences.saveAndFlush(SlackMessageReference.dm("DPREV1", "8.000003", null, "[7]", "UPREV1",
+                SlackMessageReference.DeliveryStatus.SENT, null, null)
+                .notification(SlackMessageReference.NotificationKind.HANDOFF, "UADMIN1"));
+        var reference = messageReferences.findByChannelIdAndMessageTs("DPREV1", "8.000003").orElseThrow();
+        assertThat(reference.getNotificationKind()).isEqualTo(SlackMessageReference.NotificationKind.HANDOFF);
+        assertThat(reference.getNotificationActorSlackUserId()).isEqualTo("UADMIN1");
+        assertThat(reference.getTargetSlackUserId()).isEqualTo("UPREV1");
+    }
+
+    // V7 데이터에 V8을 적용해도 원본 Task·채널·실패 DM은 보존되고 재실행은 건너뛴다.
+    @Test void upgradingV7PreservesLegacyTasksAndNotificationReferences() {
+        String schema = "reassignment_v7_upgrade";
+        Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas(schema).target("7").load().migrate();
+        jdbc.update("INSERT INTO reassignment_v7_upgrade.tasks(title,status,created_at) VALUES ('기존 업무','TODO',now())");
+        jdbc.update("INSERT INTO reassignment_v7_upgrade.slack_message_references(channel_id,message_ts,task_ids) VALUES ('CLEGACY','7.000001','[1]')");
+        jdbc.update("INSERT INTO reassignment_v7_upgrade.slack_message_references(task_ids,message_type,target_slack_user_id,delivery_status,error_code) VALUES ('[1]','DM','ULEGACY','FAILED','missing_scope')");
+        var upgrade = Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas(schema).load();
+        assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(1);
+        assertThat(upgrade.migrate().migrationsExecuted).isZero();
+        assertThat(jdbc.queryForMap("SELECT title,due_date_warning FROM reassignment_v7_upgrade.tasks"))
+                .containsEntry("title", "기존 업무").containsEntry("due_date_warning", null);
+        assertThat(jdbc.queryForMap("SELECT channel_id,message_ts,task_ids,notification_kind,notification_actor_slack_user_id FROM reassignment_v7_upgrade.slack_message_references WHERE message_type='CHANNEL'"))
+                .containsEntry("channel_id", "CLEGACY").containsEntry("message_ts", "7.000001")
+                .containsEntry("task_ids", "[1]").containsEntry("notification_kind", "ASSIGNMENT")
+                .containsEntry("notification_actor_slack_user_id", null);
+        assertThat(jdbc.queryForMap("SELECT channel_id,message_ts,target_slack_user_id,delivery_status,error_code,notification_kind FROM reassignment_v7_upgrade.slack_message_references WHERE message_type='DM'"))
+                .containsEntry("channel_id", null).containsEntry("message_ts", null)
+                .containsEntry("target_slack_user_id", "ULEGACY").containsEntry("delivery_status", "FAILED")
+                .containsEntry("error_code", "missing_scope").containsEntry("notification_kind", "ASSIGNMENT");
     }
 
     private void meeting(long id, String hash) {

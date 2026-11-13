@@ -40,7 +40,7 @@ final class SlackSocketDispatch {
                 || "meetodo_member_select".equals(first.getActionId())) return true;
         if (!SlackBotRenderer.TASK_MENU_ACTION.equals(first.getActionId()) || first.getSelectedOption() == null) return false;
         String value = first.getSelectedOption().getValue();
-        return value != null && (value.startsWith("title:") || value.startsWith("due:") || value.startsWith("delete:"));
+        return value != null && (value.startsWith("manage:") || value.startsWith("reassign:") || value.startsWith("title:") || value.startsWith("due:") || value.startsWith("delete:"));
     }
 
 }

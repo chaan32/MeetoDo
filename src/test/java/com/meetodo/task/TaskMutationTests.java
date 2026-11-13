@@ -182,11 +182,54 @@ class TaskMutationTests {
         assertThatThrownBy(() -> service.completeFromSlack(1L, "UOTHER1")).isInstanceOf(ResourceNotFoundException.class);
     }
 
-    // 관리자는 타인 업무를 완료할 수 있고 지정자·시각 이력이 남는다.
-    @Test void adminCanCompleteAndRecordsAudit() {
-        task(owner);
+    // 관리자도 담당자가 아니면 완료하지 못하고 변경·이벤트를 남기지 않는다.
+    @Test void adminCannotCompleteAnotherOwnersTask() {
+        var task = task(owner);
+        assertThatThrownBy(() -> service.completeFromSlack(1L, "UADMIN1"))
+                .isInstanceOf(TaskCompletionForbiddenException.class);
+        assertThat(task.getStatus()).isEqualTo(TaskStatus.TODO);
+        verifyNoInteractions(history, publisher);
+        verify(tasks, never()).save(any());
+    }
+
+    // 관리자가 실제 담당자라면 자기 업무를 완료하고 감사 이력을 남긴다.
+    @Test void adminCanCompleteOwnTaskAndRecordsAudit() {
+        task(new Member("김", "관리", "운영팀", "UADMIN1"));
         assertThat(service.completeFromSlack(1L, "UADMIN1").completedBySlackUserId()).isEqualTo("UADMIN1");
-        assertThat(audit().getType()).isEqualTo("STATUS_CHANGED"); verify(publisher).publishEvent(new TaskChangedEvent(1L));
+        assertThat(audit().getType()).isEqualTo("STATUS_CHANGED");
+        verify(publisher).publishEvent(new TaskChangedEvent(1L));
+    }
+
+    // 날짜 값을 그대로 명시해도 경고를 해소하고 그 이유를 별도 이력으로 남긴다.
+    @Test void explicitSameDueDateClearsWarningWithAuditReason() {
+        var task = task(owner);
+        task.setDueDateWarning("날짜 확인 필요");
+        var result = service.edit(1L, null, true, task.getDueDate(), "UOWNER1");
+        assertThat(result.dueDateWarning()).isNull();
+        assertThat(task.getDueDateWarning()).isNull();
+        assertThat(audit().getType()).isEqualTo("DUE_DATE_WARNING_CLEARED");
+        assertThat(audit().getBeforeValue()).isEqualTo("날짜 확인 필요");
+        assertThat(audit().getAfterValue()).isEqualTo("MANUAL_DUE_DATE");
+        verify(publisher).publishEvent(new TaskChangedEvent(1L));
+    }
+
+    // null 날짜를 다시 명시한 경우도 수동 확인으로 경고를 해소한다.
+    @Test void explicitNullDueDateClearsWarningWhenAlreadyNull() {
+        var task = Task.create("API 검토", owner, null).withId(1L, Instant.EPOCH);
+        task.setDueDateWarning("날짜 확인 필요");
+        when(tasks.findByIdForUpdate(1L)).thenReturn(Optional.of(task));
+        service.edit(1L, null, true, null, "UOWNER1");
+        assertThat(task.getDueDateWarning()).isNull();
+        assertThat(audit().getType()).isEqualTo("DUE_DATE_WARNING_CLEARED");
+    }
+
+    // 제목만 수정하면 날짜 검증 경고가 사라지지 않는다.
+    @Test void titleEditPreservesDueDateWarning() {
+        var task = task(owner);
+        task.setDueDateWarning("날짜 확인 필요");
+        var result = service.edit(1L, "새 API 검토", false, null, "UOWNER1");
+        assertThat(result.dueDateWarning()).isEqualTo("날짜 확인 필요");
+        assertThat(audit().getType()).isEqualTo("TITLE_CHANGED");
     }
 
     // 가짜 Slack ID는 업무 조회 전에 거절한다.

@@ -48,4 +48,24 @@ class SlackHomeRefreshListenerTests {
         });
         verify(homes).refreshAll();
     }
+    @org.springframework.beans.factory.annotation.Autowired org.springframework.context.ApplicationEventPublisher events;
+
+    @Test void reassignmentRefreshesOldNewAndUnassignedHomeWatchersAfterCommit() {
+        // 재배정은 이전·새 담당자뿐 아니라 공유 미정 목록을 보던 열린 Home까지 갱신한다.
+        new TransactionTemplate(manager).executeWithoutResult(status -> {
+            events.publishEvent(new TaskReassignedEvent(7L, 1L, "UOLD", 2L, "UADMIN"));
+            verifyNoInteractions(homes);
+        });
+        verify(homes).refreshAll();
+    }
+
+    @Test void rolledBackReassignmentDoesNotRefreshAnyHome() {
+        // 롤백된 담당 변경은 어느 사용자 Home에도 발행하지 않는다.
+        new TransactionTemplate(manager).executeWithoutResult(status -> {
+            events.publishEvent(new TaskReassignedEvent(7L, 1L, "UOLD", 2L, "UADMIN"));
+            status.setRollbackOnly();
+        });
+        verifyNoInteractions(homes);
+    }
+
 }

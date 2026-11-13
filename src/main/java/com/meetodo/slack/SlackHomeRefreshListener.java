@@ -16,6 +16,10 @@ public class SlackHomeRefreshListener {
     @TransactionalEventListener public void created(TaskCreatedEvent event) { refresh(event.taskId(), false); }
     @TransactionalEventListener public void changed(TaskChangedEvent event) { refresh(event.taskId(), false); }
     @TransactionalEventListener public void assigned(TaskAssignedEvent event) { refresh(event.taskId(), true); }
+    @TransactionalEventListener public void reassigned(com.meetodo.task.TaskReassignedEvent event) {
+        try { var home = homes.getIfAvailable(); if (home != null) home.refreshAll(); }
+        catch (Exception ignored) { LoggerFactory.getLogger(getClass()).warn("Slack home refresh failed: INTERNAL_ERROR"); }
+    }
     @TransactionalEventListener public void memberChanged(MemberChangedEvent event) {
         try { var home = homes.getIfAvailable(); if (home != null) home.refreshAll(); }
         catch (Exception ignored) { LoggerFactory.getLogger(getClass()).warn("Slack home refresh failed: INTERNAL_ERROR"); }
