@@ -73,6 +73,33 @@ class MeasurementScriptTests {
         assertThat(report("{\"status\":\"FAILED\",\"tasks\":[]}", "없음", "2026-11-13")).endsWith("| 없음 | 없음 | 아니오 |\n");
     }
 
+
+    @Test void selectedCaseRunsWithoutSchedulingOtherCases() throws Exception {
+        // run_case의 선택 경계만 실행하며 서버·키체인·DB 삭제 구간은 포함하지 않는다.
+        assertThat(selectCase("G-내일", "G-내일")).isEqualTo("G-내일");
+    }
+
+    @Test void unselectedCaseReturnsBeforeDatabaseDeletion() throws Exception {
+        // 다른 실측 입력은 data 삭제 전에 반환한다.
+        assertThat(selectCase("G-내일", "백엔드팀지영")).isEmpty();
+    }
+
+    @Test void emptyFilterKeepsOriginalFullRunSelection() throws Exception {
+        // 선택 인자를 생략하면 기존 전체 실행 방식이 유지된다.
+        assertThat(selectCase("", "백엔드팀지영")).isEqualTo("백엔드팀지영");
+    }
+
+    private String selectCase(String filter, String label) throws Exception {
+        String script = Files.readString(Path.of("measure.sh"));
+        String selection = script.substring(script.indexOf("run_case() {"), script.indexOf("  rm -rf data/"));
+        String program = selection + "  printf '%s' \"$label\"\n}\ncase_filter=\"$1\"\nrun_case \"$2\" '{}' 1\n";
+        var running = new ProcessBuilder("zsh", "-f", "-c", program, "measure-test", filter, label)
+                .redirectErrorStream(true).start();
+        String output = new String(running.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertThat(running.waitFor()).as(output).isZero();
+        return output;
+    }
+
     private String report(String raw, String expression, String finished) throws Exception {
         String script = Files.readString(Path.of("measure.sh"));
         int start = script.indexOf("import json, sys\n");

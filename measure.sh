@@ -1,5 +1,6 @@
 #!/bin/zsh
 # 단계 F/G 실측: 매 회차마다 data/ 초기화 + 서버 재시작 후 회의록 1건 처리
+case_filter="${1:-}" # 예: zsh measure.sh G-내일 (생략하면 전체)
 export OPENAI_API_KEY="$(security find-generic-password -a "$USER" -s meetodo-openai -w)"
 export OPENAI_CHAT_MODEL=gpt-4o-mini
 
@@ -8,6 +9,7 @@ JAR=$(ls build/libs/*.jar | grep -v plain | head -1)
 
 run_case() {
   local label="$1" body="$2" round="$3" expected_expression="${4:-}"
+  [[ -n "$case_filter" && "$label" != "$case_filter" ]] && return 0
   rm -rf data/
   java -jar "$JAR" --spring.profiles.active=local,openai > /tmp/meetodo.log 2>&1 &
   local pid=$!

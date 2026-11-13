@@ -241,7 +241,7 @@ class SpringAiMeetingAgentTests {
         verify(model).call(prompt.capture());
         assertThat(prompt.getValue().getInstructions().getFirst().getText()).contains("2026-11-11");
         assertThat(prompt.getValue().getInstructions().getFirst().getText())
-                .contains("원래 날짜 표현").contains("다음 주 금요일").contains("직접 계산하거나 ISO 날짜로 바꾸지 않는다")
+                .contains("마감 표현은 조사 없이 원문 그대로").contains("다음 주 금요일").contains("내일까지").contains("전까지").contains("직접 계산하거나 ISO 날짜로 바꾸지 않는다")
                 .contains("동명이인 확인 필요").contains("팀을 추측하지 않는다");
     }
 
@@ -325,6 +325,26 @@ class SpringAiMeetingAgentTests {
         var recorded = org.mockito.ArgumentCaptor.forClass(ToolCallLog.class);
         verify(logs, times(2)).save(recorded.capture());
         assertThat(recorded.getAllValues()).extracting(ToolCallLog::getErrorCode).containsExactly("INVALID_DUE_DATE", null);
+    }
+
+    // 검증: 실제 모델의 내일까지 도구 인자를 처리하며 추가 재시도나 검증 실패를 만들지 않는다.
+    @Test void observedTomorrowParticleFromMockModelStoresCalculatedDate() {
+        Meeting meeting = meetingWithId("백엔드팀 지영은 로그인 API 오류를 내일까지 수정한다.", 97L);
+        meeting.startProcessing(Instant.parse("2026-11-13T00:00:00Z"));
+        when(tasks.save(any(com.meetodo.task.Task.class))).thenAnswer(call -> call.getArgument(0));
+        when(model.call(any(Prompt.class))).thenReturn(dateToolResponse("내일까지"), textResponse("등록 완료"));
+        AgentResult result = agent.process(meeting);
+        assertThat(result.toolCallCount()).isEqualTo(1);
+        assertThat(result.llmCallCount()).isEqualTo(2);
+        assertThat(result.validationFailureCount()).isZero();
+        var saved = org.mockito.ArgumentCaptor.forClass(com.meetodo.task.Task.class);
+        verify(tasks).save(saved.capture());
+        assertThat(saved.getValue().getDueDate()).isEqualTo(java.time.LocalDate.of(2026, 11, 14));
+        assertThat(saved.getValue().getDueDateWarning()).isNull();
+        var recorded = org.mockito.ArgumentCaptor.forClass(ToolCallLog.class);
+        verify(logs).save(recorded.capture());
+        assertThat(recorded.getValue().getArguments()).contains("내일까지");
+        assertThat(recorded.getValue().getResult()).contains("2026-11-14");
     }
 
     // 검증: 프롬프트와 도구가 같은 회의 시작일의 서울 날짜를 기준으로 삼는다.

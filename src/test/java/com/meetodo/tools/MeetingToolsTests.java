@@ -71,6 +71,19 @@ class MeetingToolsTests {
         verify(tasks, never()).save(any(Task.class));
     }
 
+    // 검증: 실제 G-내일 로그의 조사 포함 인자도 내일 날짜로 저장하고 경고를 남기지 않는다.
+    @Test void observedTomorrowWithUntilParticleKeepsDeadline() {
+        Meeting meeting = Meeting.create("백엔드팀 지영은 로그인 API 오류를 내일까지 수정한다.", MeetingSource.API_TEXT);
+        meeting.startProcessing(Instant.parse("2026-11-13T00:00:00Z"));
+        when(tasks.save(any(Task.class))).thenAnswer(call -> call.getArgument(0));
+        ToolResult result = createTask.createTask("로그인 API 오류 수정", "unassigned:NONE", "내일까지", meeting);
+        assertThat(result.success()).isTrue();
+        var saved = org.mockito.ArgumentCaptor.forClass(Task.class);
+        verify(tasks).save(saved.capture());
+        assertThat(saved.getValue().getDueDate()).isEqualTo(java.time.LocalDate.of(2026, 11, 14));
+        assertThat(saved.getValue().getDueDateWarning()).isNull();
+    }
+
     // 검증: 지원하지 않는 원표현도 저장하고 날짜 경고를 별도 필드에 보존한다.
     @Test void savesUnknownOriginalExpressionWithWarning() {
         Meeting meeting = Meeting.create("자료 정리는 월말쯤까지", MeetingSource.API_TEXT);

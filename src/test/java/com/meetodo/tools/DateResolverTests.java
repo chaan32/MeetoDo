@@ -85,4 +85,62 @@ class DateResolverTests {
     @Test void allowsSpacedOriginalWithParticle() { assertThat(DateResolver.occursInTranscript("다음주 금요일", "다음 주 금요일까지 마감")).isTrue(); }
     // 검증: 연말의 내일은 다음 해로 넘어간다.
     @Test void tomorrowAcrossYear() { assertThat(DateResolver.resolve("내일", LocalDate.of(2026, 12, 31)).date()).isEqualTo(LocalDate.of(2027, 1, 1)); }
+    // 검증: 실제 G-내일 로그처럼 조사까지 들어와도 내일로 계산한다.
+    @Test void tomorrowUntil() { resolves("내일까지", "2026-11-14"); }
+    // 검증: 다음 주 금요일도 동일한 접미사 정규화를 사용한다.
+    @Test void nextFridayUntil() { resolves("다음 주 금요일까지", "2026-11-20"); }
+    // 검증: 원래 표현 자체의 안에는 제거하지 않는다.
+    @Test void preservesEndOfWeekExpressionWithUntil() { resolves("이번 주 안에까지", "2026-11-15"); }
+    // 검증: 짧은 숫자 날짜도 같은 정규화 경계를 사용한다.
+    @Test void shortDateUntil() { resolves("11-20까지", "2026-11-20"); }
+    // 검증: 한국어 월일 표기의 일은 보존한다.
+    @Test void koreanMonthDayUntil() { resolves("11월 20일까지", "2026-11-20"); }
+    // 검증: 모레의 조사도 제거한다.
+    @Test void dayAfterTomorrowUntil() { resolves("모레까지", "2026-11-15"); }
+    // 검증: 까지는을 가장 긴 접미사로 한 번만 제거한다.
+    @Test void tomorrowUntilTopic() { resolves("내일까지는", "2026-11-14"); }
+    // 검증: 일만 있는 짧은 날짜의 조사도 정리한다.
+    @Test void dayOnlyUntil() { resolves("20일까지", "2026-11-20"); }
+    // 검증: ISO 날짜의 조사도 동일하게 정리한다.
+    @Test void isoUntil() { resolves("2026-11-20까지", "2026-11-20"); }
+    // 검증: 전까지를 내일 당일 마감으로 추측하지 않는다.
+    @Test void beforeTomorrowUntilStaysUnsupported() {
+        assertThat(DateResolver.resolve("내일 전까지", today))
+                .isEqualTo(new DateResolver.Result(null, DateResolver.UNKNOWN_WARNING, null));
+    }
+    // 검증: 전까지는도 의미 변경 없이 미지원 경고로 남긴다.
+    @Test void beforeTomorrowUntilTopicStaysUnsupported() {
+        assertThat(DateResolver.resolve("내일 전까지는", today).warning()).isEqualTo(DateResolver.UNKNOWN_WARNING);
+    }
+    // 검증: 조사뿐인 입력을 빈 마감일로 취급하지 않는다.
+    @Test void suffixAloneIsNotAnEmptyDate() {
+        assertThat(DateResolver.resolve("까지", today).warning()).isEqualTo(DateResolver.UNKNOWN_WARNING);
+    }
+    // 검증: 중복 접미사까지 반복 제거하며 잘못된 입력을 숨기지 않는다.
+    @Test void repeatedSuffixStaysUnsupported() {
+        assertThat(DateResolver.resolve("내일까지까지", today).warning()).isEqualTo(DateResolver.UNKNOWN_WARNING);
+    }
+    // 검증: 인자에만 조사가 있어도 실제 날짜 표현이 원문에 있으면 대조한다.
+    @Test void normalizedArgumentMatchesBareTranscriptDate() {
+        assertThat(DateResolver.occursInTranscript("내일까지는", "내일 자료 검토")).isTrue();
+    }
+    // 검증: 조사 제거 후에도 없는 날짜를 만들어 넣을 수 없다.
+    @Test void inventedDateWithSuffixIsRejected() {
+        assertThat(DateResolver.occursInTranscript("11-20까지", "11-21까지 검토")).isFalse();
+    }
+    // 검증: 짧은 표기를 정리한 뒤에도 연도를 잘라낼 수 없다.
+    @Test void normalizedShortDateCannotStripYear() {
+        assertThat(DateResolver.occursInTranscript("11-20까지", "2026-11-20까지 검토")).isFalse();
+    }
+    // 검증: 원문 전까지를 모델이 단순 내일로 바꿔도 배타적 의미를 잃지 않는다.
+    @Test void cannotStripBeforeModifierFromTranscript() {
+        assertThat(DateResolver.occursInTranscript("내일", "내일 전까지 자료 검토")).isFalse();
+    }
+
+    // 검증: 숫자 날짜의 전까지도 형식 오류로 혼동하지 않고 미지원 의미 경고로 남긴다.
+    @Test void numericBeforeUntilStaysUnsupported() {
+        assertThat(DateResolver.resolve("11-20 전까지", today))
+                .isEqualTo(new DateResolver.Result(null, DateResolver.UNKNOWN_WARNING, null));
+    }
+
 }

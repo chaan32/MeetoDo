@@ -25,8 +25,9 @@ public final class DateResolver {
     public record Result(LocalDate date, String warning, String errorCode) { }
 
     public static Result resolve(String expression, LocalDate referenceDate) {
-        String value = compact(expression);
+        String value = normalizeExpression(expression);
         if (value.isEmpty()) return new Result(null, "", null);
+        if (value.endsWith("전까지") || value.endsWith("전까지는")) return new Result(null, UNKNOWN_WARNING, null);
         try {
             LocalDate date;
             if (value.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}")) date = LocalDate.parse(value, ISO);
@@ -67,11 +68,19 @@ public final class DateResolver {
     }
 
     public static boolean occursInTranscript(String expression, String rawText) {
-        String value = compact(expression);
+        String value = normalizeExpression(expression);
         if (value.isEmpty()) return true;
         // Numeric boundaries reject partial days and stripping a year/month from another date.
-        return Pattern.compile("(?<![0-9/월년-])" + Pattern.quote(value) + "(?![0-9/월일-])")
+        return Pattern.compile("(?<![0-9/월년-])" + Pattern.quote(value) + "(?!전까지)(?![0-9/월일-])")
                 .matcher(compact(rawText)).find();
+    }
+
+    private static String normalizeExpression(String expression) {
+        String value = compact(expression);
+        // 전까지 changes the deadline boundary; do not silently turn it into an inclusive date.
+        if (value.endsWith("전까지") || value.endsWith("전까지는")) return value;
+        String stripped = value.replaceFirst("(?:까지는|까지)$", "");
+        return stripped.isEmpty() ? value : stripped;
     }
 
     private static Result invalid() { return new Result(null, "", "INVALID_DUE_DATE"); }
