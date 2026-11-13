@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -123,28 +124,38 @@ public class SlackMeetingInputService {
     }
 
     private void process(Pending origin, String text) {
+        var candidate = new AtomicReference<Meeting>();
         try {
             AtomicBoolean created = new AtomicBoolean();
             var response = meetings.submitFromSlack(new MeetingRequest(text), meeting -> {
+                candidate.set(meeting);
                 created.set(true);
                 bot.startInput(meeting, origin.channel());
-            }, candidate -> {
+            }, discarded -> {
                 created.set(false);
-                bot.discardInputProgress(candidate);
+                bot.discardInputProgress(discarded);
             });
-            if (!created.get()) reply(origin.reply(), "이미 정리된 회의록입니다 (회의 " + response.meetingId() + ")");
+            if (!created.get()) notice(origin, candidate.get(), "이미 정리된 회의록입니다 (회의 " + response.meetingId() + ")");
         } catch (NotificationDeliveryException failure) {
             String code = com.meetodo.notification.NotificationStateService.safeCode(failure.getCode());
             log.warn("Slack progress post failed: code={}", code);
-            reply(origin.reply(), "not_in_channel".equals(code) || "channel_not_found".equals(code)
+            notice(origin, candidate.get(), "not_in_channel".equals(code) || "channel_not_found".equals(code)
                     ? "/invite @MeetoDo 후 다시 시도해 주세요."
                     : "회의록 정리를 시작하지 못했어요. 잠시 후 다시 시도해 주세요.");
         } catch (MeetingProcessingException failure) {
             // The shared AFTER_COMMIT notifier replaces the original progress message with the safe failure result.
         } catch (Exception ignored) {
             log.warn("Slack meeting input processing failed");
-            reply(origin.reply(), "회의록 정리 기능을 사용할 수 없어요. 잠시 후 다시 시도해 주세요.");
+            if (candidate.get() != null) bot.discardInputProgress(candidate.get());
+            notice(origin, candidate.get(), "회의록 정리 기능을 사용할 수 없어요. 잠시 후 다시 시도해 주세요.");
         }
+    }
+
+    private void notice(Pending origin, Meeting candidate, String text) {
+        if (candidate != null && origin.channel().startsWith("D")
+                && candidate.getSlackInputChannelId() != null && candidate.getSlackInputMessageTs() != null) {
+            bot.showInputNotice(candidate.getSlackInputChannelId(), candidate.getSlackInputMessageTs(), text);
+        } else reply(origin.reply(), text);
     }
 
     private void expire() { pending.values().removeIf(origin -> !clock.instant().isBefore(origin.expiresAt())); }

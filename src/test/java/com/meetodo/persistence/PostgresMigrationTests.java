@@ -58,7 +58,7 @@ class PostgresMigrationTests {
         when(clock.instant()).thenReturn(fixed.instant());
     }
 
-    // 검증: 빈 PostgreSQL에 V1/V2/V3/V4/V5/V6/V7/V8/V9을 적용하고 Hibernate가 엔티티 스키마를 검증한다.
+    // 검증: 빈 PostgreSQL에 V1/V2/V3/V4/V5/V6/V7/V8/V9/V10을 적용하고 Hibernate가 엔티티 스키마를 검증한다.
     @Test void appliesInitialMigrationAndValidatesEntities() {
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '1'", String.class)).isEqualTo("1");
         assertThat(jdbc.queryForList("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'", String.class))
@@ -71,6 +71,7 @@ class PostgresMigrationTests {
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '7'", String.class)).isEqualTo("7");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '8'", String.class)).isEqualTo("8");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '9'", String.class)).isEqualTo("9");
+        assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '10'", String.class)).isEqualTo("10");
     }
 
     @Test void memberActiveDefaultsToTrueForExistingInsertContract() {
@@ -423,7 +424,7 @@ class PostgresMigrationTests {
         v2.migrate();
         jdbc.update("INSERT INTO slack_v2_upgrade.slack_message_references(channel_id, message_ts, task_ids) VALUES ('C123ABC', '1.000001', '[1,2]')");
         Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
-                .schemas("slack_v2_upgrade").load().migrate();
+                .schemas("slack_v2_upgrade").target("3").load().migrate();
         assertThat(jdbc.queryForMap("SELECT channel_id, message_ts, task_ids, message_type, delivery_status FROM slack_v2_upgrade.slack_message_references"))
                 .containsEntry("channel_id", "C123ABC").containsEntry("message_ts", "1.000001")
                 .containsEntry("task_ids", "[1,2]").containsEntry("message_type", "CHANNEL").containsEntry("delivery_status", "SENT");
@@ -520,6 +521,35 @@ class PostgresMigrationTests {
             assertThat(jdbc.queryForObject("SELECT count(*) FROM slack_audio_uploads", Long.class)).isEqualTo(1L);
             assertThat(audioUploads.find("FPOSTGRES2").orElseThrow().getStatus()).isEqualTo(SlackAudioUpload.Status.PROCESSING);
         } finally { executor.shutdownNow(); }
+    }
+
+    // V10 입력 DM 좌표와 기존 결과 채널 좌표가 PostgreSQL에서도 독립적으로 저장된다.
+    @Test void inputDmAndResultChannelCoordinatesRoundTripSeparately() {
+        var meeting = com.meetodo.meeting.Meeting.create("입력 DM 위치", com.meetodo.meeting.MeetingSource.SLACK_AUDIO);
+        meeting.recordSlackInput("DINPUT1", "10.000001");
+        meeting.recordSlackMessage("CRESULT1", "10.000002");
+        Long id = meetings.saveAndFlush(meeting).getId();
+        var saved = meetings.findById(id).orElseThrow();
+        assertThat(saved.getSlackInputChannelId()).isEqualTo("DINPUT1");
+        assertThat(saved.getSlackInputMessageTs()).isEqualTo("10.000001");
+        assertThat(saved.getSlackChannelId()).isEqualTo("CRESULT1");
+        assertThat(saved.getSlackMessageTs()).isEqualTo("10.000002");
+    }
+
+    // 기존 회의에는 입력 DM을 추정해 채우지 않고 결과 위치와 본문을 보존한다.
+    @Test void upgradingV9KeepsLegacyResultCoordinatesAndNullInputCoordinates() {
+        String schema = "input_dm_v9_upgrade";
+        Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas(schema).target("9").load().migrate();
+        jdbc.update("INSERT INTO input_dm_v9_upgrade.meetings(raw_text,content_hash,source,status,llm_call_count,tool_call_count,validation_failure_count,created_at,slack_channel_id,slack_message_ts) VALUES ('기존 회의','legacy-input-dm','API_TEXT','DONE',1,0,0,now(),'CLEGACY','9.000001')");
+        var upgrade = Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas(schema).target("10").load();
+        assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(1);
+        assertThat(upgrade.migrate().migrationsExecuted).isZero();
+        assertThat(jdbc.queryForMap("SELECT raw_text,slack_channel_id,slack_message_ts,slack_input_channel_id,slack_input_message_ts FROM input_dm_v9_upgrade.meetings"))
+                .containsEntry("raw_text", "기존 회의").containsEntry("slack_channel_id", "CLEGACY")
+                .containsEntry("slack_message_ts", "9.000001").containsEntry("slack_input_channel_id", null)
+                .containsEntry("slack_input_message_ts", null);
     }
 
     private void meeting(long id, String hash) {

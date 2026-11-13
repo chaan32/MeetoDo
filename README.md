@@ -507,3 +507,19 @@ DB `slack_audio_uploads`는 file_id unique와 PROCESSING/DONE/FAILED·meeting_id
 알려진 한계: 봇이 미초대라 이벤트 자체를 받지 못하면 안내할 수 없다. 이벤트 수신 후 게시가 거절된 경우에만 `/invite @MeetoDo`를 안내한다. 파일 실패는 자동 재시도하지 않으며 서버 중단으로 PROCESSING에 남은 기록의 복구도 이번 범위가 아니다. 바이트 동일성·화자 구분·긴 음성 분할을 처리하지 않는다. 원격 파일과 리다이렉트가 필요한 다운로드는 거절한다. 이전 메시지와 DM의 갱신은 DB 변경과 원자적이지 않다.
 
 Slack 음성 입력 최종 자동 검증: `./gradlew test bootJar --no-daemon` 성공, **1,037개 / 실패·오류·건너뜀0**. 실제 Slack 파일 업로드·음성 전사 실행은 사용자 확인 전이며 자동 테스트는 mock이다.
+
+## DM 입력 결과의 팀 채널 공유 (2026-11-14 정책 변경)
+
+사용자가 실제로 DM의 audiotest.m4a 입력→DM 스레드 결과 수정→전해찬 배정 DM을 확인했고, 기준일2026-11-14의 다음 주 금요일은2026-11-20으로 처리됐다. 이는 변경 전 정책의 실제 확인이다. 이후 **DM 음성과 DM에서 실행한 /meetodo 텍스트의 결과 본문은 SLACK_CHANNEL_ID 팀 채널에 공유**한다. 일반 텍스트 DM을 자동 회의로 처리하는 새 입력 기능은 추가하지 않는다.
+
+DM 진행은 완료 시 `✅ 회의 정리 완료 (할 일 N건) → 채널 메시지` 링크로 바뀌고 본문·버튼을 포함하지 않는다. 팀 채널에는 기존 결과 본문·완료 버튼·⋯·미정 담당자 지정을 제공한다. 담당자 DM의 원래 채널 메시지 링크도 이 팀 채널 메시지다. 채널 @MeetoDo+음성은 기존처럼 입력 채널의 원래 스레드를 유지한다.
+
+새 채널 조회 권한 대신 팀 채널 진행 메시지 게시로 전송 가능 여부를 확인한 뒤 Meeting/해시를 저장한다. 음성은 파일 ID 선점·다운로드보다도 팀 게시 확인이 먼저다. 팀 게시가 not_in_channel/channel_not_found면 입력 DM에 `/invite @MeetoDo 후 다시 시도`를 안내하고 Meeting/파일 선점을 남기지 않는다. `chat:write.public`는 추가하지 않으며 기존 권한을 유지한다. 처리 실패·중복·선점 경쟁에서는 팀 임시 메시지를 삭제하고 입력한 DM에서만 안내한다. 처리 중에는 팀 채널에 내용 없는 진행 메시지가 잠시 보일 수 있다.
+
+V10은 Meeting의 입력 DM 좌표(slack_input_channel_id/message_ts)를 nullable로 추가한다. 기존 slack_channel_id/message_ts는 결과 위치로 유지해 기존 버튼·담당자 DM·메시지 재구성 규칙을 공유한다. local H2와 PostgreSQL 모두 기존 행을 보존하며 **data/ 초기화는 필요 없다**. 과거 DM 결과나 기존 회의는 자동 이동하지 않으므로 새 본문/새 파일로 정책을 확인한다. 완전히 같은 본문/같은 file ID는 기존 중복 정책을 따른다.
+
+추가 Slack 권한·이벤트는 없다. SLACK_CHANNEL_ID에 팀 C/G 채널 ID를 설정하고 봇을 초대한 뒤 서버를 재시작한다. 근거: [chat.postMessage](https://docs.slack.dev/reference/methods/chat.postMessage/), [chat.delete](https://docs.slack.dev/reference/methods/chat.delete/), [chat.getPermalink](https://docs.slack.dev/reference/methods/chat.getPermalink/). SDK1.54 ChatUpdateRequest는 unfurlLinks/unfurlMedia 필드가 없어 해당 옵션을 넣지 않는다. 접수 안내는 blocks=[]로 본문·버튼을 제거한다.
+
+한계: DB와 Slack 게시/삭제/DM 안내는 원자적이지 않다. Slack 삭제·갱신이 실패하면 임시 메시지나 오래된 안내가 남을 수 있으며 자동 재시도하지 않는다. 팀 결과 게시가 성공해도 DM 링크 조회/갱신 실패는 팀 결과·회의를 되돌리지 않고 고정 코드로 기록한다. 새 정책의 실제 Slack 확인은 사용자 수행 전이다.
+
+DM→팀 채널 정책 자동 검증: `./gradlew test bootJar --no-daemon` 성공, **1,059개 / 실패·오류·건너뜀0**. 변경 전 DM 음성 동작은 사용자 실제 확인 완료이며, 새 팀 채널 전달 정책은 실제 확인 전이다.

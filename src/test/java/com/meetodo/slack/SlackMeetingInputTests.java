@@ -219,4 +219,49 @@ class SlackMeetingInputTests {
         assertThat(replies).containsExactly("이미 정리된 회의록입니다 (회의 7)");
     }
 
+    @Test void dmModalStartsSharedPublicationFromOriginalDm() {
+        // DM에서 연 모달도 원래 DM 채널을 공유 게시 서비스에 넘긴다.
+        input.open("trigger-1", "D1", "U1", replies::add);
+        Meeting meeting = Meeting.create("DM 회의록", MeetingSource.SLACK_TEXT);
+        when(meetings.submitFromSlack(any(), any(), any())).thenAnswer(call -> {
+            Consumer<Meeting> hook = call.getArgument(1); hook.accept(meeting); return result();
+        });
+        input.submit("V1", "D1", "U1", "DM 회의록"); queue.getFirst().run();
+        verify(bot).startInput(meeting, "D1"); assertThat(replies).isEmpty();
+    }
+    @Test void dmHashRaceDuplicateUpdatesOriginalReceiptInsteadOfSecondReply() {
+        // DM 모달의 저장 경쟁 패배는 팀 임시 결과를 지우고 기존 DM 접수 메시지에 중복을 알린다.
+        input.open("trigger-1", "D1", "U1", replies::add);
+        Meeting candidate = Meeting.create("동시 DM 회의", MeetingSource.SLACK_TEXT);
+        doAnswer(call -> { candidate.recordSlackInput("D1", "2.0"); candidate.recordSlackMessage("CTEAM", "3.0"); return null; }).when(bot).startInput(candidate, "D1");
+        when(meetings.submitFromSlack(any(), any(), any())).thenAnswer(call -> {
+            Consumer<Meeting> post = call.getArgument(1); Consumer<Meeting> discard = call.getArgument(2);
+            post.accept(candidate); discard.accept(candidate); return result();
+        });
+        input.submit("V1", "D1", "U1", "동시 DM 회의"); queue.getFirst().run();
+        verify(bot).discardInputProgress(candidate); verify(bot).showInputNotice("D1", "2.0", "이미 정리된 회의록입니다 (회의 7)"); assertThat(replies).isEmpty();
+    }
+    @Test void dmPersistenceFailureCleansTeamProgressAndUpdatesOriginalReceipt() {
+        // 알림 좌표를 만든 뒤 저장이 실패하면 팀 임시 결과를 지우고 원래 DM만 실패로 바꾼다.
+        input.open("trigger-1", "D1", "U1", replies::add);
+        Meeting candidate = Meeting.create("저장 실패 DM 회의", MeetingSource.SLACK_TEXT);
+        doAnswer(call -> { candidate.recordSlackInput("D1", "2.0"); candidate.recordSlackMessage("CTEAM", "3.0"); return null; }).when(bot).startInput(candidate, "D1");
+        when(meetings.submitFromSlack(any(), any(), any())).thenAnswer(call -> {
+            Consumer<Meeting> post = call.getArgument(1); post.accept(candidate); throw new IllegalStateException("private persistence error");
+        });
+        input.submit("V1", "D1", "U1", "저장 실패 DM 회의"); queue.getFirst().run();
+        verify(bot).discardInputProgress(candidate); verify(bot).showInputNotice(eq("D1"), eq("2.0"), contains("사용할 수 없어요")); assertThat(replies).isEmpty();
+    }
+    @Test void dmTeamInvitationFailureUsesOriginalReceiptAndCreatesNoMeetingResult() {
+        // 팀 채널 게시가 실패해도 이미 생성한 DM 접수 메시지에서만 초대를 안내한다.
+        input.open("trigger-1", "D1", "U1", replies::add);
+        Meeting candidate = Meeting.create("DM 회의", MeetingSource.SLACK_TEXT);
+        doAnswer(call -> { candidate.recordSlackInput("D1", "2.0"); throw new NotificationDeliveryException("not_in_channel"); }).when(bot).startInput(candidate, "D1");
+        when(meetings.submitFromSlack(any(), any(), any())).thenAnswer(call -> {
+            Consumer<Meeting> post = call.getArgument(1); post.accept(candidate); return result();
+        });
+        input.submit("V1", "D1", "U1", "DM 회의"); queue.getFirst().run();
+        verify(bot).showInputNotice(eq("D1"), eq("2.0"), contains("/invite @MeetoDo")); assertThat(replies).isEmpty();
+    }
+
 }

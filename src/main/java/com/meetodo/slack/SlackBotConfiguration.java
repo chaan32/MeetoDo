@@ -71,9 +71,9 @@ public class SlackBotConfiguration {
     }
     @Bean @Profile("openai") @Conditional(BotNotifierConfigured.class)
     SlackAudioInputService slackAudioInputService(MethodsClient client, SlackAudioDownloader downloader,
-            com.meetodo.audio.AudioMeetingService audio, SlackAudioUploadStore uploads,
+            com.meetodo.audio.AudioMeetingService audio, SlackAudioUploadStore uploads, SlackBotService bot,
             @Qualifier("slackMeetingExecutor") ThreadPoolTaskExecutor executor) {
-        return new SlackAudioInputService(client, downloader, audio, uploads, executor);
+        return new SlackAudioInputService(client, downloader, audio, uploads, executor, bot);
     }
     @Bean SlackHomeService slackHomeService(MethodsClient client, com.meetodo.member.MemberRepository members,
             TaskRepository tasks, TaskService service, com.meetodo.member.AdminAuthorization admins, Clock clock) {

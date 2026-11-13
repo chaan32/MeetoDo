@@ -47,6 +47,42 @@ public class SlackBotService {
         this.transactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
+    public record InputPublication(String inputChannel, String inputTs, String resultChannel, String resultTs) {
+        public boolean routed() { return inputChannel != null && inputChannel.startsWith("D") && !inputChannel.equals(resultChannel); }
+        public void attach(com.meetodo.meeting.Meeting meeting) {
+            if (routed()) meeting.recordSlackInput(inputChannel, inputTs);
+            meeting.recordSlackMessage(resultChannel, resultTs);
+        }
+    }
+
+    public InputPublication prepareInput(String originChannel, String progressTs) {
+        if (originChannel == null || !originChannel.matches("[CDG][A-Z0-9]+") || progressTs == null || progressTs.isBlank())
+            throw delivery("CONFIGURATION_ERROR");
+        if (!originChannel.startsWith("D")) return new InputPublication(originChannel, progressTs, originChannel, progressTs);
+        if (channel == null || !channel.matches("[CG][A-Z0-9]+")) throw delivery("CONFIGURATION_ERROR");
+        try {
+            var response = client.chatPostMessage(ChatPostMessageRequest.builder().channel(channel)
+                    .text("⏳ 회의록 정리 중...").parse("none").linkNames(false).unfurlLinks(false).unfurlMedia(false).build());
+            if (response == null || !response.isOk()) throw delivery(response == null ? null : response.getError());
+            if (!channel.equals(response.getChannel()) || response.getTs() == null || response.getTs().isBlank()) throw delivery(null);
+            return new InputPublication(originChannel, progressTs, channel, response.getTs());
+        } catch (NotificationDeliveryException failure) { throw failure; }
+        catch (Exception ignored) { throw delivery(null); }
+    }
+
+    public void discardInputPublication(InputPublication publication) {
+        if (publication != null && publication.routed()) deleteProgress(publication.resultChannel(), publication.resultTs());
+    }
+
+    public void showInputNotice(String channelId, String timestamp, String text) {
+        if (channelId == null || !channelId.matches("[CDG][A-Z0-9]+") || timestamp == null || timestamp.isBlank()) return;
+        try {
+            var response = client.chatUpdate(ChatUpdateRequest.builder().channel(channelId).ts(timestamp).text(text)
+                    .blocksAsString("[]").parse("none").linkNames(false).build());
+            if (response == null || !response.isOk()) log.warn("Slack input receipt update failed: INTERNAL_ERROR");
+        } catch (Exception ignored) { log.warn("Slack input receipt update failed: INTERNAL_ERROR"); }
+    }
+
     public void startInput(com.meetodo.meeting.Meeting meeting, String channelId) {
         try {
             if (channelId == null || !channelId.matches("[CDG][A-Z0-9]+")) throw delivery(null);
@@ -54,21 +90,52 @@ public class SlackBotService {
                     .text("⏳ 회의록 정리 중...").parse("none").linkNames(false).unfurlLinks(false).unfurlMedia(false).build());
             if (!response.isOk()) throw delivery(response.getError());
             if (response.getChannel() == null || response.getTs() == null) throw delivery(null);
-            meeting.recordSlackMessage(response.getChannel(), response.getTs());
+            if (channelId.startsWith("D")) meeting.recordSlackInput(response.getChannel(), response.getTs());
+            prepareInput(response.getChannel(), response.getTs()).attach(meeting);
         } catch (NotificationDeliveryException exception) { throw exception; }
         catch (Exception exception) { throw delivery(null); }
     }
 
     public void discardInputProgress(com.meetodo.meeting.Meeting candidate) {
-        if (candidate.getSlackChannelId() == null || candidate.getSlackMessageTs() == null) return;
+        deleteProgress(candidate.getSlackChannelId(), candidate.getSlackMessageTs());
+    }
+
+    private void deleteProgress(String channelId, String timestamp) {
+        if (channelId == null || timestamp == null) return;
         try {
-            var response = client.chatDelete(ChatDeleteRequest.builder().channel(candidate.getSlackChannelId())
-                    .ts(candidate.getSlackMessageTs()).build());
-            if (!response.isOk()) log.warn("Slack temporary message cleanup failed: {}", NotificationStateService.safeCode(response.getError()));
+            var response = client.chatDelete(ChatDeleteRequest.builder().channel(channelId).ts(timestamp).build());
+            if (response == null || !response.isOk()) log.warn("Slack temporary message cleanup failed: INTERNAL_ERROR");
         } catch (Exception ignored) { log.warn("Slack temporary message cleanup failed: INTERNAL_ERROR"); }
     }
 
+    private boolean routedInput(com.meetodo.meeting.Meeting meeting) {
+        return meeting != null && meeting.getSlackInputChannelId() != null && meeting.getSlackInputChannelId().startsWith("D")
+                && meeting.getSlackInputMessageTs() != null;
+    }
+
+    private void receipt(com.meetodo.meeting.Meeting meeting, int count, String destination, String timestamp) {
+        String text = "✅ 회의 정리 완료 (할 일 " + count + "건)";
+        try {
+            var link = client.chatGetPermalink(ChatGetPermalinkRequest.builder().channel(destination).messageTs(timestamp).build());
+            if (link == null || !link.isOk() || !SlackBotRenderer.validPermalink(link.getPermalink())) throw delivery(null);
+            text += " → <" + link.getPermalink() + "|채널 메시지>";
+        } catch (Exception ignored) {
+            log.warn("Slack input receipt link failed: INTERNAL_ERROR");
+            text += " → 채널 메시지 링크를 가져오지 못했어요.";
+        }
+        showInputNotice(meeting.getSlackInputChannelId(), meeting.getSlackInputMessageTs(), text);
+    }
+
+    private void publicationFailure(com.meetodo.meeting.Meeting meeting, boolean published) {
+        if (!routedInput(meeting)) return;
+        if (!published) discardInputProgress(meeting);
+        showInputNotice(meeting.getSlackInputChannelId(), meeting.getSlackInputMessageTs(),
+                "❌ 팀 채널 알림을 완료하지 못했어요 (회의 " + meeting.getId() + ")");
+    }
+
     public void send(NotificationMessage supplied) {
+        com.meetodo.meeting.Meeting inputMeeting = null;
+        boolean published = false;
         try {
             NotificationMessage message = supplied.meetingId() == null ? supplied : messages.from(results.get(supplied.meetingId()));
             List<Task> members = message.meetingId() != null
@@ -77,6 +144,13 @@ public class SlackBotService {
             if (message.meetingId() == null) message = digest(message.digestDate(), members);
             if (message.meetingId() != null && results.get(message.meetingId()).status() == com.meetodo.meeting.MeetingStatus.FAILED) members = List.of();
             var meeting = message.meetingId() == null ? null : meetings.findById(message.meetingId()).orElse(null);
+            inputMeeting = meeting;
+            if (routedInput(meeting) && results.get(message.meetingId()).status() == com.meetodo.meeting.MeetingStatus.FAILED) {
+                discardInputProgress(meeting);
+                showInputNotice(meeting.getSlackInputChannelId(), meeting.getSlackInputMessageTs(),
+                        "❌ 회의록 정리에 실패했어요 (회의 " + meeting.getId() + ")");
+                return;
+            }
             String publishedChannel = meeting != null && meeting.getSlackMessageTs() != null ? meeting.getSlackChannelId() : channel;
             String publishedTs = meeting == null ? null : meeting.getSlackMessageTs();
             if (publishedTs != null && results.get(message.meetingId()).status() == com.meetodo.meeting.MeetingStatus.FAILED)
@@ -93,6 +167,7 @@ public class SlackBotService {
                         .text(rendered.text()).blocksAsString(rendered.blocksJson()).parse("none").linkNames(false).build());
                 if (!response.isOk()) throw delivery(response.getError());
             }
+            published = true;
             String destination = publishedChannel, timestamp = publishedTs;
             String taskIds = taskIds(members);
             NotificationMessage posted = message;
@@ -104,12 +179,13 @@ public class SlackBotService {
                 reference.recordTasks(taskIds);
                 references.save(reference);
             });
+            if (routedInput(meeting)) receipt(meeting, members.stream().filter(task -> !task.isDeleted()).toList().size(), destination, timestamp);
             if (dmEnabled && message.meetingId() != null) {
                 try { sendDirectMessages(message, members, destination, timestamp); }
                 catch (Exception ignored) { log.warn("Slack DM processing failed: INTERNAL_ERROR"); }
             }
-        } catch (NotificationDeliveryException exception) { throw exception; }
-        catch (Exception exception) { throw delivery(null); }
+        } catch (NotificationDeliveryException exception) { publicationFailure(inputMeeting, published); throw exception; }
+        catch (Exception exception) { publicationFailure(inputMeeting, published); throw delivery(null); }
     }
 
     private void sendDirectMessages(NotificationMessage message, List<Task> members, String channelId, String messageTs) {

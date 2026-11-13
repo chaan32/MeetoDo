@@ -30,15 +30,17 @@ class SlackAudioInputTests {
     final SlackAudioDownloader downloader = mock(SlackAudioDownloader.class);
     final AudioMeetingService audio = mock(AudioMeetingService.class);
     final SlackAudioUploadStore store = mock(SlackAudioUploadStore.class);
+    final SlackBotService bot = mock(SlackBotService.class);
     final List<Runnable> queue = new ArrayList<>();
     SlackAudioInputService input;
     final MockMultipartFile file = new MockMultipartFile("file", "meeting.wav", "audio/wav", new byte[]{1});
     @BeforeEach void setup() throws Exception {
-        input = new SlackAudioInputService(client, downloader, audio, store, queue::add);
+        input = new SlackAudioInputService(client, downloader, audio, store, queue::add, bot);
         ChatPostMessageResponse posted = new ChatPostMessageResponse(); posted.setOk(true); posted.setTs("2.0");
         when(client.chatPostMessage(any(ChatPostMessageRequest.class))).thenReturn(posted);
         when(store.find(anyString())).thenReturn(Optional.empty()); when(store.claim(anyString())).thenReturn(true);
         when(downloader.download(anyString())).thenReturn(file);
+        when(bot.prepareInput(anyString(), anyString())).thenAnswer(call -> new SlackBotService.InputPublication(call.getArgument(0), call.getArgument(1), call.getArgument(0), call.getArgument(1)));
         when(audio.submitFromSlack(any(), any(), any())).thenReturn(result());
     }
     private AudioMeetingResponse result() {
@@ -278,7 +280,7 @@ class SlackAudioInputTests {
     @Test void registeredMessageHandlerAcknowledgesBeforeQueueing() throws Exception {
         // 등록된 핸들러도 이벤트 수신 확인을 먼저 호출한 뒤 파일 작업을 큐에 넣는다.
         List<String> order = new ArrayList<>();
-        input = new SlackAudioInputService(client, downloader, audio, store, task -> { order.add("queued"); queue.add(task); });
+        input = new SlackAudioInputService(client, downloader, audio, store, task -> { order.add("queued"); queue.add(task); }, bot);
         App app = mock(App.class); input.register(app);
         ArgumentCaptor<BoltEventHandler<MessageEvent>> handler = ArgumentCaptor.forClass(BoltEventHandler.class);
         verify(app).event(eq(MessageEvent.class), handler.capture());
@@ -319,6 +321,63 @@ class SlackAudioInputTests {
         when(client.chatUpdate(any(ChatUpdateRequest.class))).thenReturn(denied);
         input.accept(dm()); run();
         assertThat(output).contains("PROGRESS_UPDATE_FAILED").doesNotContain("private-download-url");
+    }
+
+    @Test void dmAudioPreparesTeamPublicationBeforeClaimAndAttachesTeamCoordinates() throws Exception {
+        // DM 입력은 팀 채널 게시가 확인된 뒤에만 파일을 선점하고 새 회의 결과 좌표를 붙인다.
+        var publication = new SlackBotService.InputPublication("D1", "2.0", "CTEAM", "3.0");
+        when(bot.prepareInput("D1", "2.0")).thenReturn(publication);
+        Meeting meeting = Meeting.create("private transcript", MeetingSource.SLACK_AUDIO);
+        when(audio.submitFromSlack(any(), any(), any())).thenAnswer(call -> {
+            Consumer<Meeting> hook = call.getArgument(1); hook.accept(meeting); return result();
+        });
+        input.accept(dm()); run();
+        var order = inOrder(client, store, bot, downloader);
+        order.verify(client).chatPostMessage(any(ChatPostMessageRequest.class)); order.verify(store).find("F1");
+        order.verify(bot).prepareInput("D1", "2.0"); order.verify(store).claim("F1"); order.verify(downloader).download("F1");
+        assertThat(meeting.getSlackChannelId()).isEqualTo("CTEAM"); assertThat(meeting.getSlackMessageTs()).isEqualTo("3.0");
+        verify(bot, never()).discardInputPublication(any()); verify(client, never()).chatUpdate(any(ChatUpdateRequest.class));
+    }
+    @Test void teamInvitationFailureUpdatesOriginWithoutClaimingAudio() throws Exception {
+        // 팀 채널에 봇이 없으면 원래 DM만 초대 안내로 바꾸고 다운로드나 회의 생성을 하지 않는다.
+        when(bot.prepareInput("D1", "2.0")).thenThrow(new com.meetodo.notification.NotificationDeliveryException("not_in_channel"));
+        input.accept(dm()); run(); assertThat(updatedText()).contains("/invite @MeetoDo");
+        verify(store, never()).claim(anyString()); verifyNoInteractions(downloader, audio);
+    }
+    @Test void repeatedDmFileDoesNotPrepareTeamPublication() throws Exception {
+        // 파일 ID 중복은 팀 채널에 임시 메시지도 만들지 않는다.
+        when(store.find("F1")).thenReturn(Optional.of(previous(SlackAudioUpload.Status.DONE)));
+        input.accept(dm()); run(); assertThat(updatedText()).contains("회의 7"); verify(bot, never()).prepareInput(anyString(), anyString());
+    }
+    @Test void dmContentDuplicateDiscardsOnlyTeamProgressAndUpdatesOrigin() throws Exception {
+        // 같은 전사문은 예약한 팀 메시지를 지우고 원래 DM에서만 중복 안내한다.
+        var publication = new SlackBotService.InputPublication("D1", "2.0", "CTEAM", "3.0");
+        when(bot.prepareInput("D1", "2.0")).thenReturn(publication);
+        input.accept(dm()); run(); verify(bot).discardInputPublication(publication); assertThat(updatedText()).contains("회의 7");
+    }
+    @Test void dmClaimLoserDiscardsOnlyTeamProgressAndKeepsOriginNotice() throws Exception {
+        // 파일 선점 경쟁에서 지면 팀 예약 메시지만 지우고 DM 접수 메시지를 재사용한다.
+        var publication = new SlackBotService.InputPublication("D1", "2.0", "CTEAM", "3.0");
+        when(bot.prepareInput("D1", "2.0")).thenReturn(publication); when(store.claim("F1")).thenReturn(false);
+        input.accept(dm()); run(); verify(bot).discardInputPublication(publication); assertThat(updatedText()).contains("처리 중"); verifyNoInteractions(downloader, audio);
+    }
+    @Test void dmTranscriptionFailureDiscardsTeamProgressAndUpdatesOnlyOrigin() throws Exception {
+        // 회의 생성 전 전사 실패는 팀 임시 메시지를 지우고 DM에만 안전한 오류를 남긴다.
+        var publication = new SlackBotService.InputPublication("D1", "2.0", "CTEAM", "3.0");
+        when(bot.prepareInput("D1", "2.0")).thenReturn(publication);
+        when(audio.submitFromSlack(any(), any(), any())).thenThrow(new AudioMeetingException(HttpStatus.BAD_GATEWAY, "AUDIO_TRANSCRIPTION_FAILED", "private failure"));
+        input.accept(dm()); run(); verify(bot).discardInputPublication(publication); assertThat(updatedText()).contains("음성");
+    }
+    @Test void dmHashRaceDiscardsTeamProgressOnceAndUpdatesOnlyOrigin() throws Exception {
+        // 본문 저장 경쟁에서 패배한 임시 회의는 팀 예약 메시지를 한 번만 정리한다.
+        var publication = new SlackBotService.InputPublication("D1", "2.0", "CTEAM", "3.0");
+        when(bot.prepareInput("D1", "2.0")).thenReturn(publication);
+        Meeting candidate = Meeting.create("private transcript", MeetingSource.SLACK_AUDIO);
+        when(audio.submitFromSlack(any(), any(), any())).thenAnswer(call -> {
+            Consumer<Meeting> beforeSave = call.getArgument(1); Consumer<Meeting> discard = call.getArgument(2);
+            beforeSave.accept(candidate); discard.accept(candidate); return result();
+        });
+        input.accept(dm()); run(); verify(bot).discardInputPublication(publication); assertThat(updatedText()).contains("회의 7");
     }
 
 }

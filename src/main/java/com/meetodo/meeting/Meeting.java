@@ -90,6 +90,12 @@ public class Meeting {
     @Column(name = "slack_message_ts", length = 80)
     private String slackMessageTs;
 
+    @Column(name = "slack_input_channel_id", length = 80)
+    private String slackInputChannelId;
+
+    @Column(name = "slack_input_message_ts", length = 80)
+    private String slackInputMessageTs;
+
     @Column(name = "stt_model", length = 100)
     private String sttModel;
     @Column(name = "transcription_time_ms")
@@ -103,6 +109,14 @@ public class Meeting {
     }
     public String getSttModel() { return sttModel; }
     public Long getTranscriptionTimeMs() { return transcriptionTimeMs; }
+
+    public void recordSlackInput(String channelId, String messageTs) {
+        this.slackInputChannelId = channelId;
+        this.slackInputMessageTs = messageTs;
+    }
+
+    public String getSlackInputChannelId() { return slackInputChannelId; }
+    public String getSlackInputMessageTs() { return slackInputMessageTs; }
 
     public void recordSlackMessage(String channelId, String messageTs) {
         this.slackChannelId = channelId;

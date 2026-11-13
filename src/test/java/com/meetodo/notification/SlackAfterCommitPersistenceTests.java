@@ -85,40 +85,145 @@ class SlackAfterCommitPersistenceTests {
         assertThat(meeting.getSlackChannelId()).isEqualTo("CTEST");
         assertThat(meeting.getSlackMessageTs()).isEqualTo("123.456");
     }
-    // Slack 음성도 커밋 후 기존 진행 메시지를 수정하고 새 배정 담당자 DM을 한 번 전송한다.
-    @Test void slackAudioUpdatesOriginalThreadAndSendsNewAssigneeDm() throws Exception {
+    @Test void slackDmAudioPersistsTeamResultAndInputReceiptSeparately() throws Exception {
+        // 음성 입력 DM에는 링크만 남기고 팀 채널의 완료 버튼·담당자 DM 참조를 별도로 커밋한다.
+        prepareDmRouting("UVOICEASSIGNEE", "DVOICEASSIGNEE");
+        var response = application.submitAudioFromSlack(new com.meetodo.meeting.dto.MeetingRequest("DM 음성 팀 채널 결과 회귀"),
+                "mock-stt", 10, meeting -> bot.prepareInput("DVOICEORIGIN", "321.123").attach(meeting), bot::discardInputProgress);
+        var meeting = meetings.findById(response.meetingId()).orElseThrow();
+        assertThat(meeting.getSource()).isEqualTo(MeetingSource.SLACK_AUDIO);
+        assertThat(meeting.getSlackInputChannelId()).isEqualTo("DVOICEORIGIN");
+        assertThat(meeting.getSlackInputMessageTs()).isEqualTo("321.123");
+        assertDmPublication(meeting, "DVOICEORIGIN", "321.123", "DVOICEASSIGNEE");
+    }
+
+    @Test void slackDmTextPersistsTeamResultAndInputReceiptSeparately() throws Exception {
+        // DM /meetodo 입력도 진행 메시지는 DM, 전체 결과와 완료 버튼은 설정한 팀 채널에 남긴다.
+        prepareDmRouting("UTEXTASSIGNEE", "DTEXTASSIGNEE");
+        var response = application.submitFromSlack(new com.meetodo.meeting.dto.MeetingRequest("DM 텍스트 팀 채널 결과 회귀"),
+                meeting -> bot.startInput(meeting, "DTEXTORIGIN"), bot::discardInputProgress);
+        var meeting = meetings.findById(response.meetingId()).orElseThrow();
+        assertThat(meeting.getSource()).isEqualTo(MeetingSource.SLACK_TEXT);
+        assertThat(meeting.getSlackInputChannelId()).isEqualTo("DTEXTORIGIN");
+        assertThat(meeting.getSlackInputMessageTs()).isEqualTo("345.678");
+        assertDmPublication(meeting, "DTEXTORIGIN", "345.678", "DTEXTASSIGNEE");
+    }
+
+    @Test void slackDmAgentFailureUpdatesOnlyInputAndDeletesTeamPlaceholder() throws Exception {
+        // LLM 실패는 입력자 DM에서만 알리고 빈 팀 채널 진행 메시지와 버튼 참조를 남기지 않는다.
+        prepareDmRouting("UFAILASSIGNEE", "DFAILASSIGNEE");
+        when(agent.process(any())).thenThrow(new MeetingAgentException("LLM_ERROR", 1, 0));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> application.submitFromSlack(
+                new com.meetodo.meeting.dto.MeetingRequest("DM 실패 원문 전체"),
+                meeting -> bot.startInput(meeting, "DFAILORIGIN"), bot::discardInputProgress))
+                .isInstanceOf(MeetingProcessingException.class);
+        var meeting = meetings.findByContentHash(Meeting.create("DM 실패 원문 전체", MeetingSource.SLACK_TEXT).getContentHash()).orElseThrow();
+        assertThat(meeting.getStatus()).isEqualTo(MeetingStatus.FAILED);
+        var update = org.mockito.ArgumentCaptor.forClass(com.slack.api.methods.request.chat.ChatUpdateRequest.class);
+        verify(client).chatUpdate(update.capture());
+        assertThat(update.getValue().getChannel()).isEqualTo("DFAILORIGIN");
+        assertThat(update.getValue().getText()).contains("❌ 회의록 정리에 실패했어요").doesNotContain("DM 실패 원문 전체", "LLM_ERROR");
+        var delete = org.mockito.ArgumentCaptor.forClass(com.slack.api.methods.request.chat.ChatDeleteRequest.class);
+        verify(client).chatDelete(delete.capture());
+        assertThat(delete.getValue().getChannel()).isEqualTo("CTEST");
+        assertThat(delete.getValue().getTs()).isEqualTo("123.456");
+        assertThat(references.count()).isZero();
+        verify(client, never()).conversationsOpen(any(com.slack.api.methods.request.conversations.ConversationsOpenRequest.class));
+    }
+
+    @Test void slackDmTeamInvitationFailureStoresNoMeetingAndNeverRunsAgent() throws Exception {
+        // DM 진행 메시지 전송이 성공해도 팀 채널에 게시할 수 없으면 해시·회의를 선점하지 않는다.
+        prepareDmRouting("UINVITEASSIGNEE", "DINVITEASSIGNEE");
+        long before = meetings.count();
+        when(client.chatPostMessage(any(ChatPostMessageRequest.class))).thenAnswer(invocation -> {
+            ChatPostMessageRequest request = invocation.getArgument(0);
+            var posted = new ChatPostMessageResponse();
+            if ("CTEST".equals(request.getChannel())) posted.setError("not_in_channel");
+            else { posted.setOk(true); posted.setChannel(request.getChannel()); posted.setTs("345.678"); }
+            return posted;
+        });
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> application.submitFromSlack(
+                new com.meetodo.meeting.dto.MeetingRequest("DM 팀 미초대 저장 금지"),
+                meeting -> bot.startInput(meeting, "DINVITEORIGIN"), bot::discardInputProgress))
+                .isInstanceOf(NotificationDeliveryException.class);
+        assertThat(meetings.count()).isEqualTo(before);
+        assertThat(references.count()).isZero();
+        verify(agent, never()).process(any());
+    }
+
+    @Test void duplicateDmInputPreservesOldCoordinatesWithoutPostingAgain() throws Exception {
+        // 같은 본문 재전송은 기존 입력·팀 채널 좌표를 보존하고 진행 메시지와 LLM을 재실행하지 않는다.
+        prepareDmRouting("UDUPASSIGNEE", "DDUPASSIGNEE");
+        var request = new com.meetodo.meeting.dto.MeetingRequest("DM 입력 동일 해시 재전송 좌표 보존");
+        var original = application.submitFromSlack(request, meeting -> bot.startInput(meeting, "DOLDORIGIN"), bot::discardInputProgress);
+        org.mockito.Mockito.clearInvocations(client, agent);
+        var repeated = application.submitFromSlack(request, meeting -> bot.startInput(meeting, "DNEWORIGIN"), bot::discardInputProgress);
+        assertThat(repeated.meetingId()).isEqualTo(original.meetingId());
+        var stored = meetings.findById(original.meetingId()).orElseThrow();
+        assertThat(stored.getSlackInputChannelId()).isEqualTo("DOLDORIGIN");
+        assertThat(stored.getSlackInputMessageTs()).isEqualTo("345.678");
+        assertThat(stored.getSlackChannelId()).isEqualTo("CTEST");
+        assertThat(stored.getSlackMessageTs()).isEqualTo("123.456");
+        verify(client, never()).chatPostMessage(any(ChatPostMessageRequest.class));
+        verify(client, never()).chatUpdate(any(com.slack.api.methods.request.chat.ChatUpdateRequest.class));
+        verify(client, never()).chatDelete(any(com.slack.api.methods.request.chat.ChatDeleteRequest.class));
+        verify(agent, never()).process(any());
+    }
+
+    private void prepareDmRouting(String assigneeId, String assigneeDm) throws Exception {
         bot.setDmEnabled(true);
-        var member = members.save(new com.meetodo.member.Member("전", "음성", "백엔드팀", "UVOICEASSIGNEE"));
+        var member = members.saveAndFlush(new com.meetodo.member.Member("전", assigneeId, "백엔드팀", assigneeId));
         when(agent.process(any(Meeting.class))).thenAnswer(call -> {
             Meeting meeting = call.getArgument(0);
-            tasks.createFromTool("Slack 음성 담당 업무", member, null, meeting);
+            tasks.createFromTool("DM 입력 업무 " + meeting.getId(), member, null, meeting);
             return new AgentResult("완료", 1, 1, 0);
+        });
+        when(client.chatPostMessage(any(ChatPostMessageRequest.class))).thenAnswer(invocation -> {
+            ChatPostMessageRequest request = invocation.getArgument(0);
+            var posted = new ChatPostMessageResponse(); posted.setOk(true); posted.setChannel(request.getChannel());
+            posted.setTs("CTEST".equals(request.getChannel()) ? "123.456" : assigneeDm.equals(request.getChannel()) ? "234.567" : "345.678");
+            return posted;
         });
         var updated = new com.slack.api.methods.response.chat.ChatUpdateResponse(); updated.setOk(true);
         when(client.chatUpdate(any(com.slack.api.methods.request.chat.ChatUpdateRequest.class))).thenReturn(updated);
+        var deleted = new com.slack.api.methods.response.chat.ChatDeleteResponse(); deleted.setOk(true);
+        when(client.chatDelete(any(com.slack.api.methods.request.chat.ChatDeleteRequest.class))).thenReturn(deleted);
         var opened = new com.slack.api.methods.response.conversations.ConversationsOpenResponse(); opened.setOk(true);
-        var channel = new com.slack.api.model.Conversation(); channel.setId("DVOICEASSIGNEE"); opened.setChannel(channel);
+        var channel = new com.slack.api.model.Conversation(); channel.setId(assigneeDm); opened.setChannel(channel);
         when(client.conversationsOpen(any(com.slack.api.methods.request.conversations.ConversationsOpenRequest.class))).thenReturn(opened);
         var link = new com.slack.api.methods.response.chat.ChatGetPermalinkResponse(); link.setOk(true);
-        link.setPermalink("https://example.slack.com/archives/DVOICEORIGIN/p321123");
+        link.setPermalink("https://meetodo.slack.com/archives/CTEST/p123456");
         when(client.chatGetPermalink(any(com.slack.api.methods.request.chat.ChatGetPermalinkRequest.class))).thenReturn(link);
-        var posted = new ChatPostMessageResponse(); posted.setOk(true); posted.setChannel("DVOICEASSIGNEE"); posted.setTs("322.124");
-        when(client.chatPostMessage(any(ChatPostMessageRequest.class))).thenReturn(posted);
-        var response = application.submitAudioFromSlack(new com.meetodo.meeting.dto.MeetingRequest("새 Slack 음성 담당자 DM 회귀"),
-                "mock-stt", 10, meeting -> meeting.recordSlackMessage("DVOICEORIGIN", "321.123"));
-        var meeting = meetings.findById(response.meetingId()).orElseThrow();
-        assertThat(meeting.getSource()).isEqualTo(MeetingSource.SLACK_AUDIO);
-        assertThat(meeting.getSlackChannelId()).isEqualTo("DVOICEORIGIN");
-        assertThat(meeting.getSlackMessageTs()).isEqualTo("321.123");
-        var update = org.mockito.ArgumentCaptor.forClass(com.slack.api.methods.request.chat.ChatUpdateRequest.class);
-        verify(client).chatUpdate(update.capture());
-        assertThat(update.getValue().getChannel()).isEqualTo("DVOICEORIGIN");
-        assertThat(update.getValue().getTs()).isEqualTo("321.123");
-        var dm = org.mockito.ArgumentCaptor.forClass(ChatPostMessageRequest.class);
-        verify(client).chatPostMessage(dm.capture());
-        assertThat(dm.getValue().getChannel()).isEqualTo("DVOICEASSIGNEE");
-        assertThat(dm.getValue().getText()).contains("새 할 일이 배정됐어요");
-        assertThat(references.findByChannelIdAndMessageTs("DVOICEASSIGNEE", "322.124")).isPresent();
+    }
+
+    private void assertDmPublication(Meeting meeting, String inputChannel, String inputTs, String assigneeDm) throws Exception {
+        assertThat(meeting.getSlackChannelId()).isEqualTo("CTEST");
+        assertThat(meeting.getSlackMessageTs()).isEqualTo("123.456");
+        var updates = org.mockito.ArgumentCaptor.forClass(com.slack.api.methods.request.chat.ChatUpdateRequest.class);
+        org.mockito.Mockito.verify(client, org.mockito.Mockito.times(2)).chatUpdate(updates.capture());
+        var team = updates.getAllValues().stream().filter(request -> "CTEST".equals(request.getChannel())).findFirst().orElseThrow();
+        assertThat(team.getTs()).isEqualTo("123.456");
+        assertThat(team.getBlocksAsString()).contains("회의 정리 완료", "meetodo_complete_task");
+        var receipt = updates.getAllValues().stream().filter(request -> inputChannel.equals(request.getChannel())).findFirst().orElseThrow();
+        assertThat(receipt.getTs()).isEqualTo(inputTs);
+        assertThat(receipt.getText()).isEqualTo("✅ 회의 정리 완료 (할 일 1건) → <https://meetodo.slack.com/archives/CTEST/p123456|채널 메시지>");
+        assertThat(receipt.getBlocksAsString()).isEqualTo("[]");
+        var ref = references.findByChannelIdAndMessageTs("CTEST", "123.456").orElseThrow();
+        assertThat(new ObjectMapper().readTree(ref.getTaskIds())).hasSize(1);
+        assertThat(references.findByChannelIdAndMessageTs(inputChannel, inputTs)).isEmpty();
+        var dm = references.findByChannelIdAndMessageTs(assigneeDm, "234.567").orElseThrow();
+        assertThat(dm.getMessageType()).isEqualTo(SlackMessageReference.MessageType.DM);
+        assertThat(dm.getPermalink()).isEqualTo("https://meetodo.slack.com/archives/CTEST/p123456");
+        var links = org.mockito.ArgumentCaptor.forClass(com.slack.api.methods.request.chat.ChatGetPermalinkRequest.class);
+        org.mockito.Mockito.verify(client, org.mockito.Mockito.atLeastOnce()).chatGetPermalink(links.capture());
+        assertThat(links.getAllValues()).allSatisfy(request -> {
+            assertThat(request.getChannel()).isEqualTo("CTEST");
+            assertThat(request.getMessageTs()).isEqualTo("123.456");
+        });
+        var posts = org.mockito.ArgumentCaptor.forClass(ChatPostMessageRequest.class);
+        org.mockito.Mockito.verify(client, org.mockito.Mockito.atLeastOnce()).chatPostMessage(posts.capture());
+        assertThat(posts.getAllValues()).filteredOn(request -> assigneeDm.equals(request.getChannel())).singleElement()
+                .satisfies(request -> assertThat(request.getBlocksAsString()).contains("https://meetodo.slack.com/archives/CTEST/p123456"));
     }
 
     // 실제 DB에서 다시 읽은 참조를 클릭해 완료·현재 상태 조회·원래 메시지 갱신까지 검증한다.

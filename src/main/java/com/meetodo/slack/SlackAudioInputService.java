@@ -3,6 +3,7 @@ package com.meetodo.slack;
 import com.meetodo.audio.AudioMeetingException;
 import com.meetodo.audio.AudioMeetingService;
 import com.meetodo.meeting.MeetingProcessingException;
+import com.meetodo.notification.NotificationDeliveryException;
 import com.slack.api.bolt.App;
 import com.slack.api.methods.MethodsClient;
 import com.slack.api.methods.request.chat.ChatPostEphemeralRequest;
@@ -16,6 +17,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -28,10 +30,11 @@ public class SlackAudioInputService {
     private final AudioMeetingService audio;
     private final SlackAudioUploadStore store;
     private final Executor executor;
+    private final SlackBotService bot;
 
     public SlackAudioInputService(MethodsClient client, SlackAudioDownloader downloader, AudioMeetingService audio,
-                                  SlackAudioUploadStore store, Executor executor) {
-        this.client = client; this.downloader = downloader; this.audio = audio; this.store = store; this.executor = executor;
+                                  SlackAudioUploadStore store, Executor executor, SlackBotService bot) {
+        this.client = client; this.downloader = downloader; this.audio = audio; this.store = store; this.executor = executor; this.bot = bot;
     }
 
     public void register(App app) {
@@ -86,32 +89,55 @@ public class SlackAudioInputService {
         } catch (Exception ignored) { log.warn("Slack audio input failed: code=PROGRESS_POST_FAILED"); return; }
 
         boolean claimed = false;
+        var pendingPublication = new AtomicReference<SlackBotService.InputPublication>();
         try {
             var existing = store.find(fileId);
             if (existing.isPresent()) { update(channel, progress, previous(existing.get())); return; }
+            var publication = bot.prepareInput(channel, progress);
+            pendingPublication.set(publication);
             if (!store.claim(fileId)) {
+                discard(pendingPublication);
                 update(channel, progress, store.find(fileId).map(this::previous).orElse("이미 처리 중인 음성입니다.")); return;
             }
             claimed = true;
             var file = downloader.download(fileId);
             AtomicBoolean created = new AtomicBoolean();
             var response = audio.submitFromSlack(file, meeting -> {
-                meeting.recordSlackMessage(channel, progress);
+                publication.attach(meeting);
                 created.set(true);
-            }, candidate -> created.set(false));
+            }, candidate -> {
+                created.set(false);
+                discard(pendingPublication);
+            });
             Long meetingId = response.meeting().meetingId();
             finish(fileId, meetingId, null);
-            if (!created.get()) update(channel, progress, "이미 정리된 음성입니다 (회의 " + meetingId + ")");
+            if (!created.get()) {
+                discard(pendingPublication);
+                update(channel, progress, "이미 정리된 음성입니다 (회의 " + meetingId + ")");
+            }
+        } catch (NotificationDeliveryException failure) {
+            discard(pendingPublication);
+            String code = com.meetodo.notification.NotificationStateService.safeCode(failure.getCode());
+            log.warn("Slack audio input failed: code={}", code);
+            update(channel, progress, "not_in_channel".equals(code) || "channel_not_found".equals(code)
+                    ? "/invite @MeetoDo 후 다시 시도해 주세요."
+                    : "음성 처리를 시작하지 못했어요. 잠시 후 다시 시도해 주세요.");
         } catch (MeetingProcessingException failure) {
             if (claimed) finish(fileId, failure.getMeetingId(), "MEETING_PROCESSING_FAILED");
             // The shared AFTER_COMMIT notifier updates this progress message and sends any assignee DMs.
         } catch (Exception failure) {
+            discard(pendingPublication);
             String code = failure instanceof AudioMeetingException audioFailure && SAFE_CODES.contains(audioFailure.getCode())
                     ? audioFailure.getCode() : "SLACK_AUDIO_FAILED";
             if (claimed) finish(fileId, null, code);
             log.warn("Slack audio input failed: code={}", code);
             update(channel, progress, failureText(code));
         }
+    }
+
+    private void discard(AtomicReference<SlackBotService.InputPublication> pending) {
+        var publication = pending.getAndSet(null);
+        if (publication != null) bot.discardInputPublication(publication);
     }
 
     private void finish(String fileId, Long meetingId, String errorCode) {
