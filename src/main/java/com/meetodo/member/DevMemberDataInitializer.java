@@ -25,8 +25,12 @@ public class DevMemberDataInitializer {
             } else if (existing.size() == 1) {
                 Member member = existing.getFirst();
                 if (actualId != null && !actualId.equals(member.getSlackUserId())) {
-                    member.changeSlackUserId(actualId);
-                    members.save(member);
+                    if (members.existsBySlackUserIdAndIdNot(actualId, member.getId())) {
+                        log.warn("Development Slack ID seed skipped because another member owns the ID");
+                    } else {
+                        member.changeSlackUserId(actualId);
+                        members.save(member);
+                    }
                 }
             } else {
                 addIfMissing(members, "전", "해찬", "백엔드팀", actualId == null ? "U-DEV-HAECHAN" : actualId);

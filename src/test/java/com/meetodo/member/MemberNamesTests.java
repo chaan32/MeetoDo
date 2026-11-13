@@ -148,4 +148,18 @@ class MemberNamesTests {
         assertThat(MemberNames.matches(saved, "지영 님")).isTrue();
         assertThat(MemberNames.matches(saved, "지영 대리는")).isFalse();
     }
+    @Test void inactiveMembersAreExcludedFromFullAndGivenNameLookup() {
+        // 비활성 팀원은 성명·이름 후보에서 제외하고 DB의 과거 행은 유지한다.
+        Member inactive=member("김","민수","백엔드팀"); inactive.deactivate(); members.saveAndFlush(inactive);
+        assertThat(MemberNames.find(members,"김민수")).isEmpty();
+        assertThat(MemberNames.find(members,"민수")).isEmpty();
+        assertThat(members.findById(inactive.getId())).isPresent();
+    }
+    @Test void inactiveFullNameDoesNotHideActiveGivenNameCandidate() {
+        // 비활성 성명 일치가 있어도 활성 이름 후보를 숨기지 않는다.
+        Member inactive=member("이","지영","백엔드팀"); inactive.deactivate(); members.saveAndFlush(inactive);
+        Member active=member("김","이지영","디자인팀");
+        assertThat(MemberNames.find(members,"이지영")).containsExactly(active);
+    }
+
 }

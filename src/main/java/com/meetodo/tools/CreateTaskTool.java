@@ -100,7 +100,7 @@ public class CreateTaskTool {
             Long id;
             try { id = Long.valueOf(assignee.substring("member:".length())); }
             catch (NumberFormatException invalidId) { return invalidAssignee(); }
-            member = members.findById(id).orElse(null);
+            member = members.findById(id).filter(Member::isActive).orElse(null);
             if (member != null && execution.hasConflictingTeamLookup(meeting, member))
                 return ToolResult.error("INVALID_ASSIGNEE_TEAM", ToolExecutionService.TEAM_MISMATCH_MESSAGE);
             if (member == null || !execution.isMemberAuthorized(meeting, id))

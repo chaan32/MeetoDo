@@ -66,7 +66,7 @@ public class FindTasksTool {
                 return ToolResult.error("INVALID_ASSIGNEE", "배정과 미정 중 하나만 선택하세요. 미정 조회에는 ID·이름을 비우고 AMBIGUOUS / NOT_FOUND / TEAM_MISMATCH / NONE 사유를 전달하세요.");
             Member member = null;
             if (selectedId != null) {
-                member = members.findById(selectedId).orElse(null);
+                member = members.findById(selectedId).filter(Member::isActive).orElse(null);
                 if (member == null || (name != null && !name.isBlank() && MemberNames.find(members, name).stream().noneMatch(candidate -> candidate.getId().equals(selectedId))))
                     return ToolResult.error("INVALID_ASSIGNEE", "findMember 후보의 ID와 이름을 확인하세요.");
             } else if (name != null && !name.isBlank()) {

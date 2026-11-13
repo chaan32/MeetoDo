@@ -44,7 +44,7 @@ public class TaskService {
 
     private Member resolveAssignee(Long assigneeId, String assigneeName) {
         if (assigneeId != null) {
-            Member byId = members.findById(assigneeId).orElseThrow(() -> new ResourceNotFoundException(
+            Member byId = members.findById(assigneeId).filter(Member::isActive).orElseThrow(() -> new ResourceNotFoundException(
                     "MEMBER_NOT_FOUND", "Assignee was not found."));
             return byId;
         }
@@ -72,6 +72,7 @@ public class TaskService {
     }
 
     public ToolTaskResult createFromToolIdempotently(String title, Member assignee, LocalDate dueDate, Meeting meeting, UnresolvedAssignee unresolved) {
+        if (assignee != null && !assignee.isActive()) throw new ResourceNotFoundException("MEMBER_NOT_FOUND", "Active assignee was not found.");
         String normalizedTitle = TaskTitles.validateAndClean(title);
         Task existing = findExistingTodo(normalizedTitle, assignee);
         if (existing != null) return new ToolTaskResult(TaskResponse.from(existing), false);

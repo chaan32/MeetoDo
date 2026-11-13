@@ -55,13 +55,26 @@ class PostgresMigrationTests {
         when(clock.instant()).thenReturn(fixed.instant());
     }
 
-    // 검증: 빈 PostgreSQL에 V1/V2/V3를 적용하고 Hibernate가 엔티티 스키마를 검증한다.
+    // 검증: 빈 PostgreSQL에 V1/V2/V3/V4를 적용하고 Hibernate가 엔티티 스키마를 검증한다.
     @Test void appliesInitialMigrationAndValidatesEntities() {
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '1'", String.class)).isEqualTo("1");
         assertThat(jdbc.queryForList("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'", String.class))
                 .contains("members", "meetings", "tasks", "tool_call_logs", "task_mentions", "daily_digests", "slack_message_references");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '2'", String.class)).isEqualTo("2");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '3'", String.class)).isEqualTo("3");
+        assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '4'", String.class)).isEqualTo("4");
+    }
+
+    @Test void memberActiveDefaultsToTrueForExistingInsertContract() {
+        // 기존 Member 등록 SQL에도 DB 기본값이 적용돼 활성 상태를 유지한다.
+        jdbc.update("INSERT INTO members(family_name,given_name,team,slack_user_id) VALUES ('김','민수','백엔드팀','UDEFAULT')");
+        assertThat(jdbc.queryForObject("SELECT active FROM members WHERE slack_user_id='UDEFAULT'",Boolean.class)).isTrue();
+    }
+    @Test void slackUserCannotBeLinkedToTwoMembersInPostgres() {
+        // 같은 Slack ID는 실제 PostgreSQL 유니크 제약에서도 두 팀원에 연결할 수 없다.
+        jdbc.update("INSERT INTO members(family_name,given_name,team,slack_user_id) VALUES ('김','민수','백엔드팀','UUNIQUE')");
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO members(family_name,given_name,team,slack_user_id) VALUES ('이','지영','디자인팀','UUNIQUE')"))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     // 검증: 다시 시작해도 적용된 V1은 재실행하지 않는다.

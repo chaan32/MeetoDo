@@ -387,3 +387,15 @@ F 실제 확인(사용자, 알림 SKIPPED·입력별3회): 백엔드팀 지영�
 measure.sh는 응답을 printf로 변환 없이 저장하고 결과 표에 제목을 출력한다. 스크립트는 회차별 개발 DB 초기화를 포함하므로 사용자 직접 실측용이며 자동 테스트는 저장·출력 부분만 격리한다. 테스트의 가짜 토큰·키·웹훅은 런타임 String.join으로 구성하고 마스킹 대상 값·assertion을 유지한다. README 외 Markdown은 .gitignore 규칙에 따라 로컬에서 관리한다.
 
 측정 스크립트·가짜 비밀값 정리 후 전체 검증: `./gradlew test bootJar --no-daemon` 성공, **470개 / 실패·오류·건너뜀0**. JSON 저장/제목 출력 격리 회귀2개 포함. 실제 실측 스크립트 전체·외부 API·push는 실행하지 않았다.
+
+## 팀원 관리 — 구현·자동 검증 단계
+
+관리자 목록은 MEETODO_ADMIN_SLACK_IDS(쉼표 구분)로 지정한다. 등록·수정·비활성화는 공통 AdminAuthorization/MemberService를 사용하고 관리자 목록이 비면 쓰기를 허용하지 않는다. GET/POST /api/members, PATCH /api/members/{id}, POST /api/members/{id}/deactivate를 제공한다. PATCH는 성·이름·팀·Slack ID 전체를 받는다. 비활성 행은 삭제하지 않고 이름 후보·새 배정에서 제외하며 기존 Task 연결을 보존한다. Slack ID는 비활성 팀원을 포함해 한 행에만 연결된다. local 샘플은 유지하고 docker에는 자동 샘플이 없다.
+
+Swagger 확인: `MEETODO_ADMIN_SLACK_IDS=U본인실제ID ./gradlew bootRun --args='--spring.profiles.active=local'`. 쓰기 요청의 X-Slack-User-Id 헤더도 같은 ID로 설정한다. 예시 본문은 `{"familyName":"남궁","givenName":"민수","team":"백엔드팀","slackUserId":"U새팀원실제ID"}`이며 실제 선택한 Slack ID로 바꾼다. GET으로 확인→등록201→전체 필드 PATCH200→deactivate200/active=false를 확인한다. 비관리자403, 연결 중복409, 비활성 ID로 새 Task 등록404를 기대한다.
+
+보안 한계: 현재 REST 인증이 없어 이 헤더는 로컬 개발자가 선언하는 값일 뿐 검증된 신원이 아니다. 외부 공개용 관리자 인증을 구현했다는 뜻이 아니다. Slack 진입점에서는 플랫폼 요청의 사용자 ID를 사용한다. Member 관리 모달/사용자 선택은 앱 홈 단계에서 연결한다. 이름은 직접 입력하고 users.info를 호출하지 않으므로 users:read를 추가하지 않는다([사용자 선택 메뉴](https://docs.slack.dev/reference/block-kit/block-elements/select-menu-element/), [users.info 권한](https://docs.slack.dev/reference/methods/users.info/)).
+
+V4와 local H2 시작 SQL은 active=true 기본값·Slack ID 유니크를 적용한다. 기존 링크가 중복이면 자동 병합·삭제하지 않으므로 사용자가 충돌 데이터를 확인해야 한다. data/ 초기화는 수행하지 않는다. 실제 Slack 관리 UI 검증은 아직 하지 않았다.
+
+팀원 관리 전체 자동 검증: `./gradlew test bootJar --no-daemon` 성공, **501개 / 실패·오류·건너뜀0**. PostgreSQL 마이그레이션·H2 기존 행 보존·비활성 ID 배정 차단을 포함한다. DEV_SLACK_USER_ID가 다른 팀원의 ID와 겹치면 개발 seed 갱신을 건너뛰며 기존 연결을 덮어쓰지 않는다.

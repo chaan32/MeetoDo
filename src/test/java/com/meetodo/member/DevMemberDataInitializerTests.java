@@ -84,6 +84,18 @@ class DevMemberDataInitializerTests {
         assertThat(captor.getAllValues().getLast().getSlackUserId()).isEqualTo("W123ABC");
     }
 
+    // 다른 팀원이 이미 사용하는 실제 Slack ID로 샘플을 덮어쓰지 않는다.
+    @Test void skipsDevelopmentSlackIdAlreadyLinkedToAnotherMember() throws Exception {
+        var members = mock(MemberRepository.class);
+        when(members.existsBySlackUserId(any())).thenReturn(true);
+        var member = new Member("전", "해찬", "백엔드팀", "U-DEV-HAECHAN");
+        when(members.findAllByNameOrderByIdAsc("전해찬")).thenReturn(java.util.List.of(member));
+        when(members.existsBySlackUserIdAndIdNot("U123ABC", member.getId())).thenReturn(true);
+        new DevMemberDataInitializer().seedDevelopmentMembers(members, "U123ABC").run(null);
+        assertThat(member.getSlackUserId()).isEqualTo("U-DEV-HAECHAN");
+        verify(members, never()).save(any());
+    }
+
     // 모델에게 보이는 도구 설명과 이름 파라미터 모두 직급·조사 추출 책임을 명시한다.
     @Test void toolAndNameParameterExplainModelExtractionResponsibility() throws Exception {
         var method = FindMemberTool.class.getMethod("invokeFindMember", String.class, String.class, ToolContext.class);

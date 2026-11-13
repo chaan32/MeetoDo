@@ -17,8 +17,8 @@ public final class MemberNames {
     }
 
     private static List<Member> exact(MemberRepository members, String name) {
-        List<Member> full = members.findAllByNameOrderByIdAsc(name);
-        return full.isEmpty() ? members.findAllByGivenNameOrderByIdAsc(name) : full;
+        List<Member> full = members.findAllByNameOrderByIdAsc(name).stream().filter(Member::isActive).toList();
+        return full.isEmpty() ? members.findAllByGivenNameOrderByIdAsc(name).stream().filter(Member::isActive).toList() : full;
     }
 
     public static boolean matches(Member member, String input) {
