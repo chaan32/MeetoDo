@@ -21,6 +21,9 @@ public class MemberService {
     public MemberService(MemberRepository members, AdminAuthorization authorization) {
         this.members = members; this.authorization = authorization;
     }
+    private org.springframework.context.ApplicationEventPublisher events = event -> {};
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setEventPublisher(org.springframework.context.ApplicationEventPublisher events) { this.events = events; }
     @Transactional(readOnly = true)
     public List<MemberResponse> findAll() {
         return members.findAll(Sort.by("id")).stream().map(MemberResponse::from).toList();
@@ -40,6 +43,7 @@ public class MemberService {
     public MemberResponse deactivate(Long id, String actor) {
         authorization.requireAdmin(actor);
         Member member = find(id); member.deactivate();
+        events.publishEvent(new MemberChangedEvent());
         return MemberResponse.from(member);
     }
     private Member find(Long id) {
@@ -47,7 +51,11 @@ public class MemberService {
                 "MEMBER_NOT_FOUND", "팀원을 찾지 못했어요."));
     }
     private MemberResponse save(Member member) {
-        try { return MemberResponse.from(members.saveAndFlush(member)); }
+        try {
+            MemberResponse response = MemberResponse.from(members.saveAndFlush(member));
+            events.publishEvent(new MemberChangedEvent());
+            return response;
+        }
         catch (DataIntegrityViolationException ignored) { throw conflict(); }
     }
     private MemberManagementException conflict() {

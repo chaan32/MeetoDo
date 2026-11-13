@@ -27,9 +27,11 @@ public class SlackTaskEditService {
     private final SlackBotService bot;
     private final TaskService tasks;
     private final Clock clock;
+    private SlackHomeService homes;
+    void setHomes(SlackHomeService homes) { this.homes = homes; }
     // Task IDs and origin coordinates are server-owned; modal metadata never authorizes mutations.
     private final Map<String, Pending> pending = new HashMap<>();
-    private record Pending(long taskId, String operation, String channel, String timestamp, String actor, Instant expiresAt) { }
+    private record Pending(long taskId, String operation, String channel, String timestamp, String actor, Instant expiresAt, boolean home) { }
 
     public SlackTaskEditService(MethodsClient client, SlackBotService bot, TaskService tasks, Clock clock) {
         this.client = client; this.bot = bot; this.tasks = tasks; this.clock = clock;
@@ -40,7 +42,9 @@ public class SlackTaskEditService {
             var ack = context.ack(); var payload = request.getPayload();
             if (payload.getContainer() != null && payload.getUser() != null && payload.getActions() != null && !payload.getActions().isEmpty()) {
                 var option = payload.getActions().getFirst().getSelectedOption();
-                select(payload.getTriggerId(), payload.getContainer().getChannelId(), payload.getContainer().getMessageTs(),
+                if (payload.getView() != null && "home".equals(payload.getView().getType()) && "view".equals(payload.getContainer().getType()))
+                    selectHome(payload.getTriggerId(), payload.getUser().getId(), option == null ? null : option.getValue());
+                else select(payload.getTriggerId(), payload.getContainer().getChannelId(), payload.getContainer().getMessageTs(),
                         payload.getUser().getId(), option == null ? null : option.getValue());
             }
             return ack;
@@ -68,11 +72,20 @@ public class SlackTaskEditService {
     }
 
     public void select(String trigger, String channel, String timestamp, String actor, String selection) {
+        select(trigger, channel, timestamp, actor, selection, false);
+    }
+
+    public void selectHome(String trigger, String actor, String selection) {
+        select(trigger, null, null, actor, selection, true);
+    }
+
+    private void select(String trigger, String channel, String timestamp, String actor, String selection, boolean home) {
         try {
             String[] parts = selection.split(":", -1);
             if (parts.length != 2 || !List.of("title", "due", "reopen", "delete").contains(parts[0])) throw new IllegalArgumentException();
             long taskId = Long.parseLong(parts[1]);
-            bot.authorizeTaskMessage(channel, timestamp, actor, taskId);
+            if (home) homes.authorizeTask(actor, taskId);
+            else bot.authorizeTaskMessage(channel, timestamp, actor, taskId);
             TaskResponse task = tasks.authorizeMutation(taskId, actor);
             if ("reopen".equals(parts[0])) { tasks.reopen(taskId, actor); return; }
             if (trigger == null || trigger.isBlank()) throw new IllegalArgumentException();
@@ -83,7 +96,7 @@ public class SlackTaskEditService {
             synchronized (pending) {
                 expire();
                 if (pending.size() >= 1000) throw new IllegalStateException();
-                pending.put(response.getView().getId(), new Pending(taskId, parts[0], channel, timestamp, actor, clock.instant().plusSeconds(1800)));
+                pending.put(response.getView().getId(), new Pending(taskId, parts[0], channel, timestamp, actor, clock.instant().plusSeconds(1800), home));
             }
         } catch (Exception failure) { failure(channel, actor, failure); }
     }
@@ -97,7 +110,8 @@ public class SlackTaskEditService {
         }
         if (origin == null) return;
         try {
-            bot.authorizeTaskMessage(origin.channel(), origin.timestamp(), actor, origin.taskId());
+            if (origin.home()) homes.authorizeTask(actor, origin.taskId());
+            else bot.authorizeTaskMessage(origin.channel(), origin.timestamp(), actor, origin.taskId());
             tasks.authorizeMutation(origin.taskId(), actor);
             switch (origin.operation()) {
                 case "title" -> {
@@ -143,7 +157,8 @@ public class SlackTaskEditService {
                 : failure instanceof com.meetodo.task.exception.DuplicateTaskException duplicate ? "이미 같은 할 일이 있어요 (#" + duplicate.getExistingTaskId() + ")"
                 : "할 일을 변경하지 못했어요. 메시지에서 다시 시도해 주세요.";
         log.warn("Slack task mutation failed: {}", failure instanceof TaskMutationException mutation ? mutation.getCode() : "INTERNAL_ERROR");
-        bot.ephemeral(channel, actor, text);
+        if (channel == null && homes != null) homes.publish(actor, text);
+        else bot.ephemeral(channel, actor, text);
     }
     private Map<String,String> plain(String text) { return Map.of("type", "plain_text", "text", text); }
     private void expire() { pending.values().removeIf(origin -> !clock.instant().isBefore(origin.expiresAt())); }

@@ -161,4 +161,16 @@ class SlackBotRendererTests {
         assertThat(rendered.text()).contains("외 2건");
     }
 
+    // Home은 긴 미정 후보 경고가 있어도 section 한도를 넘기지 않는다.
+    @Test void homeTaskBlocksBoundLongUnresolvedCandidateWarning() {
+        var candidates=java.util.stream.IntStream.range(0,20)
+                .mapToObj(i -> new com.meetodo.task.UnresolvedAssignee.Candidate((long)i,"이름"+i+"가".repeat(95),"팀"+i+"가".repeat(95))).toList();
+        var detail=new com.meetodo.task.UnresolvedAssignee("TEAM_MISMATCH","해찬","프론트엔드팀",candidates,0);
+        var task=com.meetodo.task.Task.create("로그 확인",null,null,null,detail);
+        org.springframework.test.util.ReflectionTestUtils.setField(task,"id",7L);
+        var blocks=new SlackBotRenderer().taskBlocks(task);
+        var text=(java.util.Map<?,?>)blocks.getFirst().get("text");
+        assertThat(text.get("text").toString()).hasSizeLessThanOrEqualTo(3000);
+    }
+
 }

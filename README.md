@@ -423,3 +423,13 @@ TaskEvent에는 변경 유형, 이전/이후 값, 변경자, 시각을 Task 변�
 V6는 deleted=false 기본값과 task_events를 추가한다. local H2도 시작 SQL로 기존 행에 기본값을 적용하므로 정상 개발 DB의 초기화는 필요하지 않다. 데이터 삭제는 자동 수행하지 않는다.
 
 3단계 최종 전체 검증: `./gradlew test bootJar --no-daemon` 성공, **662개 / 실패·오류·건너뜀0**. PostgreSQL V6·TaskEvent·삭제 필터, H2 기존 행 보존, API37개 수정 시나리오, Slack 모달·메시지·ACK·커밋/롤백 회귀를 포함한다. 실제 Slack/OpenAI는 호출하지 않았다.
+
+## Slack 앱 홈 — 단계4
+
+Slack 앱 설정의 **App Home → Home Tab 활성화**, **Event Subscriptions → Bot Events → app_home_opened**를 추가한다. Socket Mode는 유지하므로 공개 Request URL은 필요 없다. 기존 chat:write/commands/im:write 범위에서 동작하며 views.publish·views.open/push 자체는 추가 OAuth scope가 없다. scope를 바꾸지 않았다면 권한 추가에 따른 재설치는 필요하지 않다. Slack 설정 화면이 재설치를 요구하면 안내를 따른다. 근거: [app_home_opened](https://docs.slack.dev/reference/events/app_home_opened/), [views.publish](https://docs.slack.dev/reference/methods/views.publish/), [Home 100블록 제한](https://docs.slack.dev/reference/views/home-tab-views/), [views.push](https://docs.slack.dev/reference/methods/views.push/).
+
+앱 Home을 열면 현재 활성 팀원 연결로 본인 TODO를 마감 지남/오늘/이번 주(일요일까지)/이후/마감 없음으로 나누고, 팀 전체 미정 TODO와 지정 수단을 보여준다. 완료·지정·수정은 기존 공통 서비스를 사용한다. 미등록 사용자는 등록 요청 안내를 본다. 관리자는 등록 전에도 **팀원 관리** 버튼을 볼 수 있어 자신과 팀원을 연결할 수 있다. 관리 모달에서 성·이름·팀을 직접 입력하고 실제 Slack 사용자를 선택한다. 수정·확인 후 비활성화도 같은 MemberService 검증을 사용한다. 디렉터리 선택은 처음100명까지 표시하며 더 큰 조직의 검색·페이지 처리는 구현하지 않았다.
+
+변경 커밋 이후 열린 Home을 DB로 다시 게시한다. 미정 목록은 공유되므로 지정/미정 변경은 열린 Home들을 갱신하고, 개인 Task 변경은 해당 담당자의 Home을 갱신한다. 긴 후보 경고는 section3000자 안에서 말줄임하고 Home 전체는100블록 내 표시 후 `외 N건은 GET /api/tasks에서 확인`을 붙인다. **알려진 한계:** 홈을 연 사용자 목록과 모달 문맥은 프로세스 메모리다. 재시작 후 다시 홈을 열면 최신 DB를 게시하고, 다중 인스턴스 간 Home 갱신 대상 공유는 아직 구현하지 않았다. 다른 인스턴스로 모달 제출이 전달되면 다시 열어야 할 수 있다.
+
+4단계 최종 전체 검증: `./gradlew test bootJar --no-daemon` 성공, **729개 / 실패·오류·건너뜀0**. 최종 실행의 Slack 전송·인증은 mock/테스트 격리이며, 실제 Home·관리 모달 UI는 사용자 확인 전이다. Gradle 테스트 heap만1g로 지정해 전체 회귀를 유지했다.

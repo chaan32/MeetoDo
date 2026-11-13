@@ -167,4 +167,24 @@ class SlackTaskEditTests {
         open("delete"); edits.close("V1", "U1"); edits.submit("V1", "U1", false, null);
         verify(tasks, never()).delete(anyLong(), any());
     }
+    @Test void homeTitleModalUsesHomeScopeAndSharedMutation() throws Exception {
+        // Home 수정은 채널 메시지 좌표 대신 열린 Home의 업무 소속을 열기·제출 때 재검증한다.
+        var home=mock(SlackHomeService.class); edits.setHomes(home);
+        edits.selectHome("trigger-1","U1","title:7");
+        edits.submit("V1","U1",true,"새 업무 제목");
+        verify(home,times(2)).authorizeTask("U1",7L);
+        verify(tasks).edit(7L,"새 업무 제목",false,null,"U1");
+        verify(bot,never()).authorizeTaskMessage(any(),any(),any(),anyLong());
+    }
+
+    @Test void homeMutationErrorIsPublishedPrivatelyOnOwnHome() {
+        // Home 권한 오류는 채널이 아니라 요청자 Home에만 안전한 안내를 표시한다.
+        var home=mock(SlackHomeService.class); edits.setHomes(home);
+        doThrow(new IllegalArgumentException("provider secret")).when(home).authorizeTask("U1",7L);
+        edits.selectHome("trigger-1","U1","title:7");
+        verify(home).publish(eq("U1"),argThat(text -> !text.contains("provider secret")));
+        verifyNoInteractions(tasks);
+        verify(bot,never()).ephemeral(any(),any(),any());
+    }
+
 }

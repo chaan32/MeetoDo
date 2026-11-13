@@ -44,6 +44,16 @@ public class SlackBotRenderer {
         return new Rendered(title + rendered.text().substring(escapedTitle.length()), List.copyOf(blocks));
     }
 
+    List<Map<String, Object>> taskBlocks(Task task) {
+        var message = new NotificationMessage(null, "내 할 일", List.of(), List.of(), "MeetoDo");
+        List<Map<String, Object>> blocks = new ArrayList<>();
+        String line = line(message, task, null);
+        blocks.add(taskSection(line.length() > 3000 ? bounded(line, 2999) + "…" : line, task));
+        var actions = taskActions(task);
+        if (actions != null) blocks.add(actions);
+        return List.copyOf(blocks);
+    }
+
     static boolean validPermalink(String value) {
         return value != null && value.length() <= 2048
                 && value.matches("https://[A-Za-z0-9.-]+\\.slack\\.com/archives/[A-Z0-9]+/p[0-9]+(?:\\?[A-Za-z0-9_=&.%-]+)?");

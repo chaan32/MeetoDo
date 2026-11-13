@@ -47,6 +47,8 @@ dependencies {
 }
 
 tasks.named('test') {
+    // Full regression caches multiple Spring/JPA contexts; 512 MiB exhausted the test JVM heap.
+    maxHeapSize = '1g'
     useJUnitPlatform()
     // Local credentials must not enable real webhook transports in profile-matrix tests.
     environment 'MEETODO_SLACK_BOT_ENABLED', 'false'

@@ -65,32 +65,51 @@ public class SlackBotConfiguration {
             @Qualifier("slackMeetingExecutor") ThreadPoolTaskExecutor executor, Clock clock) {
         return new SlackMeetingInputService(client, meetings, bot, executor, clock);
     }
-    @Bean SlackTaskEditService slackTaskEditService(MethodsClient client, SlackBotService bot, TaskService tasks, Clock clock) {
-        return new SlackTaskEditService(client, bot, tasks, clock);
+    @Bean SlackHomeService slackHomeService(MethodsClient client, com.meetodo.member.MemberRepository members,
+            TaskRepository tasks, TaskService service, com.meetodo.member.AdminAuthorization admins, Clock clock) {
+        return new SlackHomeService(client, members, tasks, service, admins, clock);
     }
-    @Bean App slackBoltApp(Environment env, SlackBotService service, ObjectProvider<SlackMeetingInputService> inputs, SlackTaskEditService edits) {
+    @Bean SlackMemberManagementService slackMemberManagementService(MethodsClient client,
+            com.meetodo.member.MemberService members, com.meetodo.member.AdminAuthorization admins, Clock clock, SlackHomeService homes) {
+        return new SlackMemberManagementService(client, members, admins, clock, homes);
+    }
+    @Bean SlackTaskEditService slackTaskEditService(MethodsClient client, SlackBotService bot, TaskService tasks, Clock clock, SlackHomeService homes) {
+        var edits = new SlackTaskEditService(client, bot, tasks, clock);
+        edits.setHomes(homes);
+        return edits;
+    }
+    @Bean App slackBoltApp(Environment env, SlackBotService service, ObjectProvider<SlackMeetingInputService> inputs, SlackTaskEditService edits, SlackHomeService homes, SlackMemberManagementService memberManagement) {
         App app = new App(AppConfig.builder().singleTeamBotToken(env.getProperty("SLACK_BOT_TOKEN")).build());
-        app.blockAction(SlackBotRenderer.COMPLETE_ACTION, (request, context) -> {
+        app.event(com.slack.api.model.event.AppHomeOpenedEvent.class, (request, context) -> {
             var ack = context.ack();
-            var payload = request.getPayload();
-            if (payload.getContainer() != null && payload.getUser() != null && payload.getActions() != null && !payload.getActions().isEmpty())
-                service.complete(payload.getContainer().getChannelId(), payload.getContainer().getMessageTs(),
-                        payload.getUser().getId(), payload.getActions().getFirst().getValue());
+            if ("home".equals(request.getEvent().getTab())) homes.publish(request.getEvent().getUser());
+            return ack;
+        });
+        app.blockAction(SlackBotRenderer.COMPLETE_ACTION, (request, context) -> {
+            var ack = context.ack(); var payload = request.getPayload();
+            if (payload.getContainer() != null && payload.getUser() != null && payload.getActions() != null && !payload.getActions().isEmpty()) {
+                String value = payload.getActions().getFirst().getValue();
+                if (home(payload)) homes.complete(payload.getUser().getId(), value);
+                else service.complete(payload.getContainer().getChannelId(), payload.getContainer().getMessageTs(), payload.getUser().getId(), value);
+            }
             return ack;
         });
         app.blockAction(java.util.regex.Pattern.compile(SlackBotRenderer.ASSIGN_CANDIDATE_ACTION + "_[0-9]+"), (request, context) -> {
             var ack = context.ack(); var payload = request.getPayload();
-            if (payload.getContainer() != null && payload.getUser() != null && payload.getActions() != null && !payload.getActions().isEmpty())
-                service.assignCandidate(payload.getContainer().getChannelId(), payload.getContainer().getMessageTs(),
-                        payload.getUser().getId(), payload.getActions().getFirst().getValue());
+            if (payload.getContainer() != null && payload.getUser() != null && payload.getActions() != null && !payload.getActions().isEmpty()) {
+                String value = payload.getActions().getFirst().getValue();
+                if (home(payload)) homes.assignCandidate(payload.getUser().getId(), value);
+                else service.assignCandidate(payload.getContainer().getChannelId(), payload.getContainer().getMessageTs(), payload.getUser().getId(), value);
+            }
             return ack;
         });
         app.blockAction(SlackBotRenderer.ASSIGN_SELECT_ACTION, (request, context) -> {
             var ack = context.ack(); var payload = request.getPayload();
             if (payload.getContainer() != null && payload.getUser() != null && payload.getActions() != null && !payload.getActions().isEmpty()) {
                 var action = payload.getActions().getFirst();
-                service.assignSelection(payload.getContainer().getChannelId(), payload.getContainer().getMessageTs(),
-                        payload.getUser().getId(), action.getBlockId(), action.getSelectedOption() == null ? null : action.getSelectedOption().getValue());
+                String value = action.getSelectedOption() == null ? null : action.getSelectedOption().getValue();
+                if (home(payload)) homes.assignSelection(payload.getUser().getId(), action.getBlockId(), value);
+                else service.assignSelection(payload.getContainer().getChannelId(), payload.getContainer().getMessageTs(), payload.getUser().getId(), action.getBlockId(), value);
             }
             return ack;
         });
@@ -98,15 +117,19 @@ public class SlackBotConfiguration {
             var ack = context.ack(); var payload = request.getPayload();
             if (payload.getContainer() != null && payload.getUser() != null && payload.getActions() != null && !payload.getActions().isEmpty()) {
                 var action = payload.getActions().getFirst();
-                service.assignUser(payload.getContainer().getChannelId(), payload.getContainer().getMessageTs(),
-                        payload.getUser().getId(), action.getBlockId(), action.getSelectedUser());
+                if (home(payload)) homes.assignUser(payload.getUser().getId(), action.getBlockId(), action.getSelectedUser());
+                else service.assignUser(payload.getContainer().getChannelId(), payload.getContainer().getMessageTs(), payload.getUser().getId(), action.getBlockId(), action.getSelectedUser());
             }
             return ack;
         });
+        memberManagement.register(app);
         edits.register(app);
         SlackMeetingInputService input = inputs.getIfAvailable();
         if (input != null) input.register(app);
         return app;
+    }
+    private static boolean home(com.slack.api.app_backend.interactive_components.payload.BlockActionPayload payload) {
+        return payload.getView() != null && "home".equals(payload.getView().getType()) && "view".equals(payload.getContainer().getType());
     }
     @Bean(destroyMethod = "") SocketModeClient slackSocketClient(Environment env) {
         try { return Slack.getInstance().socketMode(env.getProperty("SLACK_APP_TOKEN")); }

@@ -53,7 +53,9 @@ public class TaskService {
         Member assignee = resolveAssignee(request.assigneeId(), request.assigneeName());
         Task existing = findExistingTodo(title, assignee);
         if (existing != null) throw new DuplicateTaskException(existing.getId());
-        return TaskResponse.from(tasks.save(Task.create(title, assignee, request.dueDate())));
+        Task saved = tasks.save(Task.create(title, assignee, request.dueDate()));
+        events.publishEvent(new TaskCreatedEvent(saved.getId()));
+        return TaskResponse.from(saved);
     }
 
     private Member resolveAssignee(Long assigneeId, String assigneeName) {
@@ -95,6 +97,7 @@ public class TaskService {
         Task existing = findExistingTodo(normalizedTitle, assignee);
         if (existing != null) return new ToolTaskResult(TaskResponse.from(existing), false);
         Task saved = tasks.save(Task.create(normalizedTitle, assignee, dueDate, meeting, unresolved));
+        events.publishEvent(new TaskCreatedEvent(saved.getId()));
         return new ToolTaskResult(TaskResponse.from(saved), true);
     }
 
