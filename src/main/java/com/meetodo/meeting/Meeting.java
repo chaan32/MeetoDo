@@ -90,6 +90,20 @@ public class Meeting {
     @Column(name = "slack_message_ts", length = 80)
     private String slackMessageTs;
 
+    @Column(name = "stt_model", length = 100)
+    private String sttModel;
+    @Column(name = "transcription_time_ms")
+    private Long transcriptionTimeMs;
+
+    public void recordTranscription(String model, long elapsedMs) {
+        if (model == null || !model.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,99}") || elapsedMs < 0)
+            throw new IllegalArgumentException("Invalid transcription metadata");
+        this.sttModel = model;
+        this.transcriptionTimeMs = elapsedMs;
+    }
+    public String getSttModel() { return sttModel; }
+    public Long getTranscriptionTimeMs() { return transcriptionTimeMs; }
+
     public void recordSlackMessage(String channelId, String messageTs) {
         this.slackChannelId = channelId;
         this.slackMessageTs = messageTs;

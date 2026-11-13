@@ -279,6 +279,33 @@ class SpringAiMeetingAgentTests {
                 .contains("명사형 업무 이름","좋은 예:","나쁜 예:","API 명세 정리","배포 로그를 정리한다.","INVALID_TITLE_FORMAT");
     }
 
+    // 화자 정보 없는 음성의 1인칭 요청은 mock 모델의 NONE 결과로 미정 Task를 저장한다.
+    @Test void firstPersonAudioTaskRemainsUnassignedForHumanConfirmation() {
+        Meeting meeting=Meeting.create("제가 배포 로그를 정리할게요.",MeetingSource.AUDIO);
+        ReflectionTestUtils.setField(meeting,"id",93L);
+        when(tasks.save(any(com.meetodo.task.Task.class))).thenAnswer(call -> {
+            var task=(com.meetodo.task.Task)call.getArgument(0); ReflectionTestUtils.setField(task,"id",33L); return task;
+        });
+        var call=new AssistantMessage.ToolCall("audio-task","function","createTask",
+                "{\"title\":\"배포 로그 정리\",\"assignee\":\"unassigned:NONE\"}");
+        var response=new ChatResponse(List.of(new Generation(AssistantMessage.builder().content("").toolCalls(List.of(call)).build())));
+        when(model.call(any(Prompt.class))).thenReturn(response,textResponse("담당자를 지정해 주세요."));
+        agent.process(meeting);
+        var saved=org.mockito.ArgumentCaptor.forClass(com.meetodo.task.Task.class); verify(tasks).save(saved.capture());
+        assertThat(saved.getValue().getAssignee()).isNull();
+        var prompts=org.mockito.ArgumentCaptor.forClass(Prompt.class); verify(model,times(2)).call(prompts.capture());
+        assertThat(prompts.getAllValues().getFirst().getInstructions().getFirst().getText())
+                .contains("화자 구분 없이","unassigned:NONE","사람이 Slack에서 담당자를 지정");
+    }
+
+    // 텍스트 실험의 프롬프트에는 음성 전용 안내를 섞지 않는다.
+    @Test void textMeetingDoesNotReceiveAudioOnlySpeakerRule() {
+        when(model.call(any(Prompt.class))).thenReturn(textResponse("완료"));
+        agent.process(meetingWithId("민수는 로그를 정리한다.",94L));
+        var prompts=org.mockito.ArgumentCaptor.forClass(Prompt.class); verify(model).call(prompts.capture());
+        assertThat(prompts.getValue().getInstructions().getFirst().getText()).doesNotContain("화자 구분 없이");
+    }
+
     private Meeting meetingWithId(String text, long id) {
         Meeting meeting = Meeting.create(text, MeetingSource.API_TEXT);
         ReflectionTestUtils.setField(meeting, "id", id);

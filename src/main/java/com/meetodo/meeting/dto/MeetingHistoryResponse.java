@@ -12,13 +12,14 @@ public record MeetingHistoryResponse(Long meetingId, Long duplicateOfMeetingId, 
                                      List<MeetingTaskResponse> tasks, int unassignedCount,
                                      Long processingTimeMs, int llmCallCount, int toolCallCount,
                                      int validationFailureCount, NotificationStatus notificationStatus, String notificationType,
-                                     String notificationErrorCode, Instant notifiedAt) {
+                                     String notificationErrorCode, Instant notifiedAt, com.meetodo.meeting.MeetingSource source,
+                                     String sttModel, Long transcriptionTimeMs) {
     public static MeetingHistoryResponse from(Meeting meeting, MeetingResponse result) {
         return new MeetingHistoryResponse(meeting.getId(), meeting.getDuplicateOfMeetingId(),
                 meeting.getRawText(), meeting.getStatus(),
                 meeting.getSummary(), meeting.getCreatedAt(), result.tasks(), result.unassignedCount(),
                 meeting.getProcessingTimeMs(), meeting.getLlmCallCount(), meeting.getToolCallCount(),
                 meeting.getValidationFailureCount(), result.notificationStatus(), result.notificationType(),
-                result.notificationErrorCode(), result.notifiedAt());
+                result.notificationErrorCode(), result.notifiedAt(), meeting.getSource(), meeting.getSttModel(), meeting.getTranscriptionTimeMs());
     }
 }

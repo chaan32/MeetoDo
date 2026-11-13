@@ -1,8 +1,10 @@
 # MeetoDo
 
-회의록에서 할 일을 추출해 담당자·마감일과 함께 등록하고 Slack으로 알리는 백엔드 프로젝트입니다. 별도 프론트엔드 없이 Swagger로 입력하고 Slack으로 결과를 받는 서비스를 목표로 합니다.
+회의록에서 할 일을 추출해 담당자·마감일과 함께 등록하고 Slack으로 알리는 백엔드 프로젝트입니다. 별도 프론트엔드 없이 Swagger 또는 Slack /meetodo로 입력하고 Slack에서 결과 확인·완료 처리를 합니다.
 
 Task API·회의 처리 에이전트·Slack/Discord 완료 알림·평일 마감 다이제스트를 구현했습니다. OpenAI 연결과 완료 알림의 실제 채널 표시는 사용자가 확인했습니다. 5단계 SENT·ALREADY_SENT·force 재전송도 사용자가 실제 Slack에서 확인했습니다.
+
+팀원 관리·미정 담당자 지정·할 일 수정/삭제·앱 홈·음성 REST 입력을 추가 구현하고 자동 검증했습니다. 이 신규 기능들의 실제 Slack·음성 실행은 사용자 확인 전입니다. 단계별 검증과 알려진 한계는 아래 추가 기능 항목에 기록합니다.
 
 ## 실행
 
@@ -433,3 +435,25 @@ Slack 앱 설정의 **App Home → Home Tab 활성화**, **Event Subscriptions �
 변경 커밋 이후 열린 Home을 DB로 다시 게시한다. 미정 목록은 공유되므로 지정/미정 변경은 열린 Home들을 갱신하고, 개인 Task 변경은 해당 담당자의 Home을 갱신한다. 긴 후보 경고는 section3000자 안에서 말줄임하고 Home 전체는100블록 내 표시 후 `외 N건은 GET /api/tasks에서 확인`을 붙인다. **알려진 한계:** 홈을 연 사용자 목록과 모달 문맥은 프로세스 메모리다. 재시작 후 다시 홈을 열면 최신 DB를 게시하고, 다중 인스턴스 간 Home 갱신 대상 공유는 아직 구현하지 않았다. 다른 인스턴스로 모달 제출이 전달되면 다시 열어야 할 수 있다.
 
 4단계 최종 전체 검증: `./gradlew test bootJar --no-daemon` 성공, **729개 / 실패·오류·건너뜀0**. 최종 실행의 Slack 전송·인증은 mock/테스트 격리이며, 실제 Home·관리 모달 UI는 사용자 확인 전이다. Gradle 테스트 heap만1g로 지정해 전체 회귀를 유지했다.
+
+## 음성 회의록 REST 입력 — 추가 기능 단계5
+
+`POST /api/meetings/audio`는 openai 프로필에서 multipart의 `file`을 받아 `/v1/audio/transcriptions`로 전사하고, 변환 텍스트를 기존 회의 처리 서비스에 전달한다. 실제 전사 클라이언트는 `(local | docker) & openai & !test`와 API 키가 있을 때만 생성한다. 기본/local/test에는 오디오 엔드포인트가 없고, openai 단독으로 전사 빈이 없는 경우에는404 AUDIO_TRANSCRIPTION_DISABLED다.
+
+기본 모델은 `MEETODO_STT_MODEL=gpt-transcribe`다. 현재 공식 전사 가이드가 신규 일반 전사에 권장하며 prompt 문맥 힌트를 지원한다. 이미 설치된 Spring AI1.1.8의 OpenAiAudioApi/TranscriptionRequest/StructuredResponse를 직접 사용해 모델 문자열과 JSON 응답을 처리한다. SDK 전사 모델의 기본 whisper 옵션·재시도 경고 로깅은 사용하지 않는다. 연결3초/읽기60초, 자동 재시도 없음. 근거: [파일 전사·힌트·형식](https://developers.openai.com/api/docs/guides/speech-to-text), [gpt-transcribe](https://developers.openai.com/api/docs/models/gpt-transcribe). 실제 정확도·시간·비용 개선은 아직 측정하지 않았다.
+
+활성 팀원 성명을 최대2000자 prompt 힌트로 전달하고 Slack ID·비활성 이름은 포함하지 않는다. 힌트는 정답을 보장하지 않는다. 파일은25,000,000바이트 이하, flac/mp3/mp4/mpeg/mpga/m4a/ogg/wav/webm 확장자만 받는다. 실제 스트림도 상한+1까지만 읽어 신고 크기가 작아도 초과 입력을 거절한다. 확장자는 허용 목록을 검증하고 실제 코덱 유효성은 공급자에 위임한다. 녹음 시간(분)을 따로 분석하지 않고 파일 크기와 전사문20,000자로 제한한다. 긴 녹음 분할은 구현하지 않았다. 원본 음성은 DB·data/에 저장하지 않는다. 서비스가 만든 전사용 임시 파일은 전사 직후, 실패 경로에서도 삭제하고 서블릿 multipart 임시 자원은 요청 종료 시 정리된다.
+
+응답은 `transcript`, `sttModel`, `transcriptionTimeMs`, `meeting`이다. 새 회의의 source=AUDIO와 모델·전사 시간을 V7으로 저장하고 GET 회의 응답에도 제공한다. 전사·입력 검증 실패면 Meeting을 만들지 않는다. 같은 전사문의 SHA-256이 이미 있으면 기존 회의를 반환하며 기존 출처/모델을 덮어쓰지 않는다. 이 경우 STT는 이미 호출됐으므로 현재 요청의 전사 시간은 오디오 응답에서 확인한다. 전사 시간은 에이전트 처리 시간과 별도다.
+
+화자 구분이 없어 “제가 할게요”만으로는 담당자를 알 수 없다. AUDIO 전용 프롬프트는 이를 unassigned:NONE으로 남기게 안내하고, Slack의 사용자 선택/담당자 지정으로 사람이 확정한다. 텍스트 실측 프롬프트에는 이 음성 전용 안내를 섞지 않는다. Slack 파일 업로드 입력은 다음 단계 후보이며 이번에 구현하지 않았다.
+
+실행은 앞의 키체인 기반 OpenAI·Slack 환경변수에 `export MEETODO_STT_MODEL=gpt-transcribe`를 더하고 `local,openai`로 시작한다. Swagger에서 POST /api/meetings/audio → Try it out → file 선택 → Execute. 명시적 담당자가 있는 짧은 녹음과 “제가 배포 로그를 정리할게요” 녹음을 각각 보내 전사문·source·전사 시간·할 일·미정 상태와 Slack 지정까지 확인한다. CLI 예:
+
+```zsh
+curl -sS -F 'file=@/절대경로/meeting.wav' http://localhost:8080/api/meetings/audio
+```
+
+V7은 PostgreSQL의 nullable 메타데이터 컬럼을 추가한다. local H2 시작 SQL은 기존 출처 ENUM에 AUDIO를 추가하면서 기존 텍스트 행을 보존한다. 기존 H2 enum을 ddl-auto=update만으로 확장하지 못하는 문제를 업그레이드 테스트로 찾아 보완했다. data/ 초기화는 필요하지 않으며 자동 삭제하지 않는다. 신규 음성 기능의 실제 OpenAI·Slack 실행 확인은 아직 사용자 수행 전이다.
+
+5단계 최종 전체 검증: `./gradlew test bootJar --no-daemon` 성공, **784개 / 실패·오류·건너뜀0**. 실제 전사·메신저 대신 mock을 사용했다. PostgreSQL V7·H2 기존 enum/행 보존, 전사·파일 경계·실패·원본 임시 파일 삭제, 1인칭 미정과 기존 전체 회귀를 포함한다. 실제 음성 정확도·비용은 측정하지 않았다.

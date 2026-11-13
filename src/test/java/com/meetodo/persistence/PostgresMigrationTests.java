@@ -55,7 +55,7 @@ class PostgresMigrationTests {
         when(clock.instant()).thenReturn(fixed.instant());
     }
 
-    // 검증: 빈 PostgreSQL에 V1/V2/V3/V4/V5/V6를 적용하고 Hibernate가 엔티티 스키마를 검증한다.
+    // 검증: 빈 PostgreSQL에 V1/V2/V3/V4/V5/V6/V7를 적용하고 Hibernate가 엔티티 스키마를 검증한다.
     @Test void appliesInitialMigrationAndValidatesEntities() {
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '1'", String.class)).isEqualTo("1");
         assertThat(jdbc.queryForList("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'", String.class))
@@ -65,6 +65,7 @@ class PostgresMigrationTests {
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '4'", String.class)).isEqualTo("4");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '5'", String.class)).isEqualTo("5");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '6'", String.class)).isEqualTo("6");
+        assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '7'", String.class)).isEqualTo("7");
     }
 
     @Test void memberActiveDefaultsToTrueForExistingInsertContract() {
@@ -197,6 +198,27 @@ class PostgresMigrationTests {
         Long id = tasks.saveAndFlush(Task.create("삭제한 업무",member,date)).getId();
         jdbc.update("UPDATE tasks SET deleted=true WHERE id=?",id);
         return id;
+    }
+
+    // AUDIO 출처·모델·전사 시간은 변환 텍스트와 함께 커밋 후에도 조회된다.
+    @Test void audioMetadataRoundTripsWithoutPersistingOriginalFile() {
+        var meeting=com.meetodo.meeting.Meeting.create("전사된 회의 내용",com.meetodo.meeting.MeetingSource.AUDIO);
+        meeting.recordTranscription("test-transcribe",123L);
+        Long id=meetings.saveAndFlush(meeting).getId();
+        var reloaded=meetings.findById(id).orElseThrow();
+        assertThat(reloaded.getSource()).isEqualTo(com.meetodo.meeting.MeetingSource.AUDIO);
+        assertThat(reloaded.getRawText()).isEqualTo("전사된 회의 내용");
+        assertThat(reloaded.getSttModel()).isEqualTo("test-transcribe");
+        assertThat(reloaded.getTranscriptionTimeMs()).isEqualTo(123L);
+        assertThat(jdbc.queryForList("SELECT column_name FROM information_schema.columns WHERE table_name='meetings'",String.class))
+                .doesNotContain("audio_bytes","audio_file","audio_path");
+    }
+
+    // V7의 새 메타데이터는 기존 텍스트 회의에서 null로 보존된다.
+    @Test void legacyTextMeetingKeepsNullTranscriptionMetadata() {
+        meeting(1,"legacy-audio-migration");
+        assertThat(jdbc.queryForMap("SELECT stt_model,transcription_time_ms FROM meetings WHERE id=1"))
+                .containsEntry("stt_model",null).containsEntry("transcription_time_ms",null);
     }
 
     // 검증: 다시 시작해도 적용된 V1은 재실행하지 않는다.

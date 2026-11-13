@@ -57,6 +57,8 @@ public class SpringAiMeetingAgent implements MeetingAgent {
                 .internalToolExecutionEnabled(false)
                 .build();
         String systemPrompt = systemPrompt(LocalDate.now(clock.withZone(SEOUL)));
+        if (meeting.getSource() == MeetingSource.AUDIO)
+            systemPrompt += "\n이 입력은 화자 구분 없이 음성에서 변환됐다. '제가 할게요', '내가' 같은 1인칭만 있고 담당자 이름이 명확하지 않으면 화자를 추측하지 말고 assignee=unassigned:NONE으로 등록한다. 사람이 Slack에서 담당자를 지정한다.";
         Prompt prompt = new Prompt(List.of(new SystemMessage(systemPrompt), new UserMessage(meeting.getRawText())), options);
         int llmCalls = 0;
         int toolCalls = 0;

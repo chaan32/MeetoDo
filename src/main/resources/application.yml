@@ -3,6 +3,10 @@ spring:
     name: meetodo
   profiles:
     default: local
+  servlet:
+    multipart:
+      max-file-size: 25000000B
+      max-request-size: 26MB
   flyway:
     enabled: false
   jpa:

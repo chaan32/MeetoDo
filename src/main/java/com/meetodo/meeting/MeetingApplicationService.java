@@ -40,6 +40,10 @@ public class MeetingApplicationService {
         return submit(request, MeetingSource.API_TEXT, meeting -> { }, meeting -> { });
     }
 
+    public MeetingResponse submitAudio(MeetingRequest request, String model, long transcriptionTimeMs) {
+        return submit(request, MeetingSource.AUDIO, meeting -> meeting.recordTranscription(model, transcriptionTimeMs), meeting -> { });
+    }
+
     private MeetingResponse submit(MeetingRequest request, MeetingSource source,
                                    java.util.function.Consumer<Meeting> beforeSave,
                                    java.util.function.Consumer<Meeting> discardProgress) {
