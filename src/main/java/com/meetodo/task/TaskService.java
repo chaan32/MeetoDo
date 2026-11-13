@@ -34,6 +34,13 @@ public class TaskService {
         this.clock = clock;
     }
 
+    private org.springframework.context.ApplicationEventPublisher events = event -> {};
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setEventPublisher(org.springframework.context.ApplicationEventPublisher events) {
+        this.events = events;
+    }
+
     public TaskResponse create(CreateTaskRequest request) {
         String title = TaskTitles.validateAndClean(request.title());
         Member assignee = resolveAssignee(request.assigneeId(), request.assigneeName());
@@ -109,6 +116,29 @@ public class TaskService {
                 new ResourceNotFoundException("TASK_NOT_FOUND", "Task was not found."));
         task.changeStatus(request.status(), null, clock.instant());
         task = tasks.save(task);
+        return TaskResponse.from(task, countsFor(List.of(task)).getOrDefault(task.getId(), 0L));
+    }
+
+    public TaskResponse assign(Long id, Long memberId, String actorSlackUserId) {
+        if (actorSlackUserId == null || !actorSlackUserId.matches("[UW][A-Z0-9]{1,79}"))
+            throw new TaskAssignmentException("INVALID_SLACK_USER_ID", "A valid Slack user ID is required.");
+        Task task = tasks.findByIdForUpdate(id).orElseThrow(() ->
+                new ResourceNotFoundException("TASK_NOT_FOUND", "Task was not found."));
+        if (task.getAssignee() != null || task.getStatus() == TaskStatus.DONE)
+            return TaskResponse.from(task, countsFor(List.of(task)).getOrDefault(task.getId(), 0L));
+        if (memberId == null || memberId <= 0)
+            throw new TaskAssignmentException("VALIDATION_ERROR", "assigneeId must be positive.");
+        Member member = resolveAssignee(memberId, null);
+        UnresolvedAssignee snapshot = task.getUnresolvedAssignee();
+        if (snapshot != null && ("AMBIGUOUS".equals(snapshot.reason()) || "TEAM_MISMATCH".equals(snapshot.reason()))
+                && snapshot.candidates().stream().noneMatch(candidate -> memberId.equals(candidate.id())))
+            throw new TaskAssignmentException("ASSIGNEE_NOT_CANDIDATE", "저장된 후보 중에서 담당자를 선택하세요.");
+        Task duplicate = findExistingTodo(task.getTitle(), member);
+        if (duplicate != null && !duplicate.getId().equals(task.getId()))
+            throw new DuplicateTaskException(duplicate.getId());
+        task.assign(member, actorSlackUserId, clock.instant());
+        tasks.save(task);
+        events.publishEvent(new TaskAssignedEvent(task.getId(), actorSlackUserId));
         return TaskResponse.from(task, countsFor(List.of(task)).getOrDefault(task.getId(), 0L));
     }
 

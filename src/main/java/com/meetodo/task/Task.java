@@ -58,6 +58,21 @@ public class Task {
     @Column(name = "completed_at")
     private Instant completedAt;
 
+    @Column(name = "assigned_by_slack_user_id", length = 80)
+    private String assignedBySlackUserId;
+
+    @Column(name = "assigned_at")
+    private Instant assignedAt;
+
+    public void assign(Member member, String actorSlackUserId, Instant at) {
+        this.assignee = java.util.Objects.requireNonNull(member);
+        this.assignedBySlackUserId = actorSlackUserId;
+        this.assignedAt = java.util.Objects.requireNonNull(at);
+    }
+
+    public String getAssignedBySlackUserId() { return assignedBySlackUserId; }
+    public Instant getAssignedAt() { return assignedAt; }
+
     protected Task() {
     }
 

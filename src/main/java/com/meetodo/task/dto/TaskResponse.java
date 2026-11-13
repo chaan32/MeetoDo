@@ -9,7 +9,14 @@ import com.meetodo.task.UnresolvedAssignee;
 public record TaskResponse(Long id, String title, MemberResponse assignee,
                            LocalDate dueDate, TaskStatus status, Long meetingId, Instant createdAt,
                            long mentionCount, UnresolvedAssignee unresolvedAssignee, String warning, String unassignedReason,
-                           String completedBySlackUserId, Instant completedAt) {
+                           String completedBySlackUserId, Instant completedAt,
+                           String assignedBySlackUserId, Instant assignedAt) {
+    public TaskResponse(Long id, String title, MemberResponse assignee, LocalDate dueDate, TaskStatus status,
+                        Long meetingId, Instant createdAt, long mentionCount, UnresolvedAssignee unresolvedAssignee,
+                        String warning, String unassignedReason, String completedBySlackUserId, Instant completedAt) {
+        this(id, title, assignee, dueDate, status, meetingId, createdAt, mentionCount, unresolvedAssignee,
+                warning, unassignedReason, completedBySlackUserId, completedAt, null, null);
+    }
     public TaskResponse(Long id, String title, MemberResponse assignee, LocalDate dueDate, TaskStatus status,
                         Long meetingId, Instant createdAt, long mentionCount, UnresolvedAssignee unresolvedAssignee,
                         String warning, String unassignedReason) {
@@ -29,6 +36,6 @@ public record TaskResponse(Long id, String title, MemberResponse assignee,
         return new TaskResponse(task.getId(), task.getTitle(), member, task.getDueDate(),
                 task.getStatus(), task.getMeetingId(), task.getCreatedAt(), mentionCount, detail,
                 detail == null ? null : detail.warning(), detail == null ? null : detail.reason(),
-                task.getCompletedBySlackUserId(), task.getCompletedAt());
+                task.getCompletedBySlackUserId(), task.getCompletedAt(), task.getAssignedBySlackUserId(), task.getAssignedAt());
     }
 }

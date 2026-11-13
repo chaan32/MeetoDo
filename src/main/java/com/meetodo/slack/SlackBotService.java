@@ -22,6 +22,8 @@ import org.springframework.transaction.TransactionDefinition;
 public class SlackBotService {
     private static final Logger log = LoggerFactory.getLogger(SlackBotService.class);
     private boolean dmEnabled;
+    private com.meetodo.member.MemberRepository members;
+    public void setMembers(com.meetodo.member.MemberRepository members) { this.members = members; }
     public void setDmEnabled(boolean enabled) { this.dmEnabled = enabled; }
 
     private final MethodsClient client;
@@ -111,19 +113,25 @@ public class SlackBotService {
     }
 
     private void sendDirectMessages(NotificationMessage message, List<Task> members, String channelId, String messageTs) {
+        sendDirectMessages(message, members, channelId, messageTs, null, false);
+    }
+
+    private void sendDirectMessages(NotificationMessage message, List<Task> members, String channelId, String messageTs, String actor, boolean assignment) {
         Map<Long, MeetingTaskResponse> details = metadata(message);
         Map<String,List<Task>> recipients = members.stream()
-                .filter(task -> details.containsKey(task.getId()) && "CREATED".equals(details.get(task.getId()).resultType()))
+                .filter(task -> assignment || details.containsKey(task.getId()) && "CREATED".equals(details.get(task.getId()).resultType()))
                 .filter(task -> task.getAssignee() != null && !SlackBotRenderer.mention(task.getAssignee().getSlackUserId()).isEmpty())
                 .collect(Collectors.groupingBy(task -> task.getAssignee().getSlackUserId(), LinkedHashMap::new, Collectors.toList()));
         if (recipients.isEmpty()) return;
         String permalink = null;
         String linkError = null;
         try {
+            if (channelId != null && messageTs != null) {
             var response = client.chatGetPermalink(ChatGetPermalinkRequest.builder().channel(channelId).messageTs(messageTs).build());
             if (!response.isOk()) throw delivery(response.getError());
             if (!SlackBotRenderer.validPermalink(response.getPermalink())) throw delivery(null);
             permalink = response.getPermalink();
+            }
         } catch (Exception exception) { linkError = errorCode(exception); }
         for (var recipient : recipients.entrySet()) {
             String dmChannel = null;
@@ -135,7 +143,7 @@ public class SlackBotService {
                     if (!opened.isOk()) throw delivery(opened.getError());
                     if (opened.getChannel() == null || opened.getChannel().getId() == null) throw delivery(null);
                     dmChannel = opened.getChannel().getId();
-                    var rendered = renderer.renderDirectMessage(message, recipient.getValue(), details, permalink);
+                    var rendered = renderer.renderDirectMessage(message, recipient.getValue(), details, permalink, actor);
                     var response = client.chatPostMessage(post(dmChannel, rendered));
                     if (!response.isOk()) throw delivery(response.getError());
                     if (response.getTs() == null || response.getChannel() == null) throw delivery(null);
@@ -146,7 +154,7 @@ public class SlackBotService {
                 String storedChannel = dmChannel, storedTs = dmTs, storedError = error, storedLink = permalink;
                 String ids = taskIds(recipient.getValue());
                 transactions.executeWithoutResult(status -> references.save(SlackMessageReference.dm(storedChannel, storedTs,
-                        meetings.findById(message.meetingId()).orElseThrow(), ids, recipient.getKey(),
+                        message.meetingId() == null ? null : meetings.findById(message.meetingId()).orElseThrow(), ids, recipient.getKey(),
                         storedError == null ? SlackMessageReference.DeliveryStatus.SENT : SlackMessageReference.DeliveryStatus.FAILED,
                         storedError, storedLink)));
                 if (error != null) log.warn("Slack DM delivery failed: {}", error);
@@ -168,20 +176,28 @@ public class SlackBotService {
         } catch (Exception exception) {
             ephemeral(channelId, actor, "등록된 메시지와 할 일을 확인할 수 없어요."); return;
         }
+        refreshTask(taskId, reference);
+    }
+
+    public void refreshTask(Long taskId) { refreshTask(taskId, null); }
+
+    private void refreshTask(Long taskId, SlackMessageReference reference) {
         List<SlackMessageReference> related = new ArrayList<>();
         try {
             // shortcut: scan stored membership for this small app; index a task-message relation when message history grows.
             related.addAll(references.findAll().stream().filter(ref -> ref.getDeliveryStatus() == SlackMessageReference.DeliveryStatus.SENT).toList());
         } catch (Exception ignored) { log.warn("Slack message lookup failed: INTERNAL_ERROR"); }
-        if (related.stream().noneMatch(ref -> Objects.equals(ref.getChannelId(), channelId) && Objects.equals(ref.getMessageTs(), messageTs))) related.add(reference);
+        if (reference != null && related.stream().noneMatch(ref -> Objects.equals(ref.getChannelId(), reference.getChannelId()) && Objects.equals(ref.getMessageTs(), reference.getMessageTs()))) related.add(reference);
         for (SlackMessageReference ref : related) {
             try {
                 List<Long> ids = ids(ref);
                 if (!ids.contains(taskId)) continue;
                 List<Task> current = tasks.findAllWithAssigneeByIdIn(ids);
-                NotificationMessage message = ref.getMeetingId() == null ? digest(ref.getDigestDate(), current) : messages.from(results.get(ref.getMeetingId()));
+                NotificationMessage message = ref.getMeetingId() != null ? messages.from(results.get(ref.getMeetingId()))
+                        : ref.getDigestDate() != null ? digest(ref.getDigestDate(), current) : assignmentMessage(null);
                 var rendered = ref.getMessageType() == SlackMessageReference.MessageType.DM
-                        ? renderer.renderDirectMessage(message, current, metadata(message), ref.getPermalink()) : render(message, current);
+                        ? renderer.renderDirectMessage(message, current, metadata(message), ref.getPermalink(),
+                                current.size() == 1 ? current.getFirst().getAssignedBySlackUserId() : null) : render(message, current);
                 var response = client.chatUpdate(ChatUpdateRequest.builder().channel(ref.getChannelId()).ts(ref.getMessageTs())
                         .text(rendered.text()).blocksAsString(rendered.blocksJson()).parse("none").linkNames(false).build());
                 if (!response.isOk()) throw delivery(response.getError());
@@ -189,6 +205,91 @@ public class SlackBotService {
                 log.warn("Slack message refresh failed: {}", errorCode(exception));
             }
         }
+    }
+
+    public void assignCandidate(String channelId, String messageTs, String actor, String value) {
+        try {
+            String[] parts = value.split(":", -1);
+            if (parts.length != 2) throw new IllegalArgumentException();
+            assign(channelId, messageTs, actor, Long.parseLong(parts[0]), Long.parseLong(parts[1]));
+        } catch (Exception exception) { assignmentFailure(channelId, actor, exception); }
+    }
+
+    public void assignSelection(String channelId, String messageTs, String actor, String blockId, String value) {
+        try { assign(channelId, messageTs, actor, assignmentTaskId(blockId), Long.parseLong(value)); }
+        catch (Exception exception) { assignmentFailure(channelId, actor, exception); }
+    }
+
+    public void assignUser(String channelId, String messageTs, String actor, String blockId, String user) {
+        try {
+            long taskId = assignmentTaskId(blockId);
+            authorize(channelId, messageTs, actor, taskId);
+            if (refreshIfAssignedOrDone(taskId)) return;
+            if (SlackBotRenderer.mention(user).isEmpty() || members == null) throw new IllegalArgumentException();
+            var member = members.findBySlackUserIdAndActiveTrue(user).orElseThrow(() ->
+                    new TaskAssignmentException("MEMBER_NOT_FOUND", "등록된 팀원이 아니에요"));
+            taskService.assign(taskId, member.getId(), actor);
+        } catch (Exception exception) { assignmentFailure(channelId, actor, exception); }
+    }
+
+    private long assignmentTaskId(String blockId) {
+        if (blockId == null || !blockId.startsWith(SlackBotRenderer.ASSIGN_BLOCK_PREFIX)) throw new IllegalArgumentException();
+        return Long.parseLong(blockId.substring(SlackBotRenderer.ASSIGN_BLOCK_PREFIX.length()));
+    }
+
+    private void assign(String channelId, String messageTs, String actor, long taskId, long memberId) throws java.io.IOException {
+        authorize(channelId, messageTs, actor, taskId);
+        performAssignment(taskId, memberId, actor);
+    }
+
+    private void performAssignment(long taskId, long memberId, String actor) {
+        if (!refreshIfAssignedOrDone(taskId)) taskService.assign(taskId, memberId, actor);
+    }
+
+    private boolean refreshIfAssignedOrDone(long taskId) {
+        boolean noChange = tasks.findAllWithAssigneeByIdIn(List.of(taskId)).stream()
+                .anyMatch(task -> task.getAssignee() != null || task.getStatus() == TaskStatus.DONE);
+        if (noChange) refreshTask(taskId);
+        return noChange;
+    }
+
+    private void authorize(String channelId, String messageTs, String actor, long taskId) throws java.io.IOException {
+        if (channelId == null || messageTs == null || SlackBotRenderer.mention(actor).isEmpty()) throw new IllegalArgumentException();
+        var reference = references.findByChannelIdAndMessageTs(channelId, messageTs).orElseThrow();
+        if (reference.getDeliveryStatus() != SlackMessageReference.DeliveryStatus.SENT || !ids(reference).contains(taskId)) throw new IllegalArgumentException();
+    }
+
+    private void assignmentFailure(String channelId, String actor, Exception exception) {
+        String message = "등록된 메시지와 담당자 정보를 확인할 수 없어요.";
+        if (exception instanceof TaskAssignmentException failure) message = failure.getMessage();
+        else if (exception instanceof com.meetodo.task.exception.DuplicateTaskException duplicate)
+            message = "이미 같은 할 일이 있어요 (#" + duplicate.getExistingTaskId() + ")";
+        else if (exception instanceof com.meetodo.task.exception.ResourceNotFoundException missing && "MEMBER_NOT_FOUND".equals(missing.getCode()))
+            message = "등록된 팀원이 아니에요";
+        if (channelId != null && !SlackBotRenderer.mention(actor).isEmpty()) ephemeral(channelId, actor, message);
+    }
+
+    public void assigned(Long taskId, String actor) {
+        try { refreshTask(taskId); }
+        catch (Exception ignored) { log.warn("Slack assignment refresh failed: INTERNAL_ERROR"); }
+        if (!dmEnabled) return;
+        try {
+            List<Task> current = tasks.findAllWithAssigneeByIdIn(List.of(taskId));
+            if (current.isEmpty()) return;
+            // shortcut: scan message membership until a task-message relation is needed for larger history.
+            var source = references.findAll().stream().filter(ref -> ref.getMessageType() == SlackMessageReference.MessageType.CHANNEL
+                    && ref.getDeliveryStatus() == SlackMessageReference.DeliveryStatus.SENT).filter(ref -> {
+                        try { return ids(ref).contains(taskId); } catch (Exception ignored) { return false; }
+                    }).findFirst().orElse(null);
+            Long meetingId = source == null ? null : source.getMeetingId();
+            sendDirectMessages(assignmentMessage(meetingId), current, source == null ? null : source.getChannelId(),
+                    source == null ? null : source.getMessageTs(), actor, true);
+        } catch (Exception ignored) { log.warn("Slack assignment DM processing failed: INTERNAL_ERROR"); }
+    }
+
+    private NotificationMessage assignmentMessage(Long meetingId) {
+        return new NotificationMessage(meetingId, "📝 새 할 일이 배정됐어요", List.of(), List.of(),
+                meetingId == null ? "MeetoDo" : "회의 " + meetingId);
     }
 
     private List<Long> ids(SlackMessageReference reference) throws java.io.IOException {

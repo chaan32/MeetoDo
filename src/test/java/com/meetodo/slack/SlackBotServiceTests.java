@@ -186,4 +186,85 @@ class SlackBotServiceTests {
         verify(client).chatDelete(any(ChatDeleteRequest.class)); verifyNoInteractions(refs,transactions);
     }
 
+    @Test void candidateAssignmentRequiresStoredMessageMembership() throws Exception {
+        // 버튼 값이 다른 업무를 가리키면 공통 서비스에 전달하지 않는다.
+        bot.assignCandidate("C1", "1.2", "UACTOR", "999:10");
+        verifyNoInteractions(service); verify(client).chatPostEphemeral(any(ChatPostEphemeralRequest.class));
+    }
+    @Test void validCandidateAssignmentUsesSharedService() {
+        // 유효한 좌표와 업무를 확인한 후 후보 ID 검증은 공통 서비스에 맡긴다.
+        bot.assignCandidate("C1", "1.2", "UACTOR", "7:10");
+        verify(service).assign(7L, 10L, "UACTOR");
+    }
+    @Test void staticSelectionUsesTaskBlockId() {
+        // 정적 선택의 옵션 값은 회원 ID이고 업무 ID는 블록에서 읽는다.
+        bot.assignSelection("C1", "1.2", "UACTOR", "meetodo_assign_task:7", "10");
+        verify(service).assign(7L, 10L, "UACTOR");
+    }
+    @Test void userSelectionResolvesOnlyActiveRegisteredSlackMember() {
+        // Slack 사용자 선택은 활성 회원 ID로 바꾼 뒤 공통 배정 서비스를 호출한다.
+        var members = mock(com.meetodo.member.MemberRepository.class);
+        var member = new com.meetodo.member.Member("김", "민수", "개발", "UMEMBER");
+        ReflectionTestUtils.setField(member, "id", 10L);
+        when(members.findBySlackUserIdAndActiveTrue("UMEMBER")).thenReturn(Optional.of(member)); bot.setMembers(members);
+        bot.assignUser("C1", "1.2", "UACTOR", "meetodo_assign_task:7", "UMEMBER");
+        verify(service).assign(7L, 10L, "UACTOR");
+    }
+    @Test void forgedUserSelectionDoesNotResolveMember() {
+        // 위조한 업무는 Slack 사용자 조회 전에 메시지 소속 검사로 차단한다.
+        var members = mock(com.meetodo.member.MemberRepository.class); bot.setMembers(members);
+        bot.assignUser("C1", "1.2", "UACTOR", "meetodo_assign_task:999", "UMEMBER");
+        verifyNoInteractions(service, members);
+    }
+    @Test void unknownSlackUserCannotBeAssigned() {
+        // 등록되지 않은 Slack 사용자는 회원 생성이나 추측 배정을 하지 않는다.
+        var members = mock(com.meetodo.member.MemberRepository.class); bot.setMembers(members);
+        bot.assignUser("C1", "1.2", "UACTOR", "meetodo_assign_task:7", "UMISSING");
+        verifyNoInteractions(service);
+    }
+
+    @Test void failedMessageCannotAuthorizeAssignment() {
+        // FAILED 전송 행은 후보 선택의 근거로 사용할 수 없다.
+        when(refs.findByChannelIdAndMessageTs("C1", "1.2")).thenReturn(Optional.of(SlackMessageReference.dm(
+                "C1", "1.2", null, "[7]", "UACTOR", SlackMessageReference.DeliveryStatus.FAILED, "missing_scope", null)));
+        bot.assignCandidate("C1", "1.2", "UACTOR", "7:10"); verifyNoInteractions(service);
+    }
+    @Test void duplicateAssignmentExplainsExistingTask() throws Exception {
+        // 배정 시 중복 충돌은 기존 업무 번호를 포함한 비공개 안내로 전달한다.
+        when(service.assign(7L, 10L, "UACTOR")).thenThrow(new com.meetodo.task.exception.DuplicateTaskException(12L));
+        bot.assignCandidate("C1", "1.2", "UACTOR", "7:10");
+        var request = ArgumentCaptor.forClass(ChatPostEphemeralRequest.class); verify(client).chatPostEphemeral(request.capture());
+        assertThat(request.getValue().getText()).isEqualTo("이미 같은 할 일이 있어요 (#12)");
+    }
+    @Test void alreadyAssignedTaskRefreshesWithoutAnotherAssignmentEvent() throws Exception {
+        // 이미 지정된 업무의 오래된 버튼 클릭은 배정 이벤트 없이 현재 메시지만 갱신한다.
+        ReflectionTestUtils.setField(task, "assignee", new com.meetodo.member.Member("김", "민수", "개발", "UMEMBER"));
+        when(refs.findAll()).thenReturn(List.of(new SlackMessageReference("C1", "1.2", null, date, "[7]")));
+        var response = new ChatUpdateResponse(); response.setOk(true); when(client.chatUpdate(any(ChatUpdateRequest.class))).thenReturn(response);
+        bot.assignCandidate("C1", "1.2", "UACTOR", "7:10");
+        verifyNoInteractions(service); verify(client).chatUpdate(any(ChatUpdateRequest.class));
+    }
+
+    @Test void staleUserSelectorRefreshesAlreadyAssignedTaskBeforeResolvingUnknownUser() throws Exception {
+        // 이미 배정된 업무의 오래된 사용자 선택은 미등록 사용자 조회 없이 현재 메시지만 갱신한다.
+        ReflectionTestUtils.setField(task, "assignee", new com.meetodo.member.Member("김", "민수", "개발", "UMEMBER"));
+        when(refs.findAll()).thenReturn(List.of(new SlackMessageReference("C1", "1.2", null, date, "[7]")));
+        var members = mock(com.meetodo.member.MemberRepository.class); bot.setMembers(members);
+        var response = new ChatUpdateResponse(); response.setOk(true); when(client.chatUpdate(any(ChatUpdateRequest.class))).thenReturn(response);
+        bot.assignUser("C1", "1.2", "UACTOR", "meetodo_assign_task:7", "UUNKNOWN");
+        verifyNoInteractions(members, service); verify(client).chatUpdate(any(ChatUpdateRequest.class));
+        verify(client, never()).chatPostEphemeral(any(ChatPostEphemeralRequest.class));
+    }
+
+    @Test void staleUserSelectorRefreshesDoneTaskBeforeResolvingUnknownUser() throws Exception {
+        // 완료된 미정 업무의 오래된 사용자 선택도 회원 조회 없이 완료 상태로 갱신한다.
+        task.changeStatus(TaskStatus.DONE);
+        when(refs.findAll()).thenReturn(List.of(new SlackMessageReference("C1", "1.2", null, date, "[7]")));
+        var members = mock(com.meetodo.member.MemberRepository.class); bot.setMembers(members);
+        var response = new ChatUpdateResponse(); response.setOk(true); when(client.chatUpdate(any(ChatUpdateRequest.class))).thenReturn(response);
+        bot.assignUser("C1", "1.2", "UACTOR", "meetodo_assign_task:7", "UUNKNOWN");
+        verifyNoInteractions(members, service); verify(client).chatUpdate(any(ChatUpdateRequest.class));
+        verify(client, never()).chatPostEphemeral(any(ChatPostEphemeralRequest.class));
+    }
+
 }

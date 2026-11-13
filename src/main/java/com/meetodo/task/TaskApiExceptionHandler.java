@@ -63,6 +63,11 @@ public class TaskApiExceptionHandler {
         return null;
     }
 
+    @ExceptionHandler(TaskAssignmentException.class)
+    ResponseEntity<ApiError> assignment(TaskAssignmentException exception) {
+        return ResponseEntity.badRequest().body(new ApiError(exception.getCode(), exception.getMessage(), Map.of()));
+    }
+
     @ExceptionHandler(ResourceNotFoundException.class)
     ResponseEntity<ApiError> notFound(ResourceNotFoundException exception) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(new ApiError(

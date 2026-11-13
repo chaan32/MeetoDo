@@ -13,6 +13,10 @@ import java.util.Map;
 
 public class SlackBotRenderer {
     public static final String COMPLETE_ACTION = "meetodo_complete_task";
+    public static final String ASSIGN_CANDIDATE_ACTION = "meetodo_assign_candidate";
+    public static final String ASSIGN_SELECT_ACTION = "meetodo_assign_select";
+    public static final String ASSIGN_USER_ACTION = "meetodo_assign_user";
+    public static final String ASSIGN_BLOCK_PREFIX = "meetodo_assign_task:";
     public record Rendered(String text, List<Map<String, Object>> blocks) {
         public String blocksJson() { return new GsonBuilder().disableHtmlEscaping().create().toJson(blocks); }
     }
@@ -25,8 +29,18 @@ public class SlackBotRenderer {
 
     public Rendered renderDirectMessage(NotificationMessage message, List<Task> tasks,
                                          Map<Long, MeetingTaskResponse> metadata, String permalink) {
-        return render(new NotificationMessage(message.meetingId(), "📝 새 할 일이 배정됐어요", List.of(), List.of(), message.footer()),
+        return renderDirectMessage(message, tasks, metadata, permalink, null);
+    }
+
+    public Rendered renderDirectMessage(NotificationMessage message, List<Task> tasks,
+            Map<Long, MeetingTaskResponse> metadata, String permalink, String actor) {
+        String title = "📝 새 할 일이 배정됐어요" + (mention(actor).isEmpty() ? "" : " (지정: " + mention(actor) + ")");
+        Rendered rendered = render(new NotificationMessage(message.meetingId(), title, List.of(), List.of(), message.footer()),
                 tasks, metadata, permalink);
+        if (mention(actor).isEmpty()) return rendered;
+        String escapedTitle = bounded(escape(title));
+        var blocks = new ArrayList<>(rendered.blocks()); blocks.set(0, section(title, null));
+        return new Rendered(title + rendered.text().substring(escapedTitle.length()), List.copyOf(blocks));
     }
 
     static boolean validPermalink(String value) {
@@ -48,10 +62,10 @@ public class SlackBotRenderer {
         }
         List<String> lines = ordered.stream().map(task -> line(message, task, metadata.get(task.getId()))).toList();
         int shown = 0;
-        if (fits(heading, lines, "", footer)) shown = lines.size();
+        if (fits(heading, lines, "", footer, ordered)) shown = lines.size();
         else for (int size = 1; size <= lines.size(); size++) {
             String omitted = size == lines.size() ? "" : escape(message.omission(lines.size() - size));
-            if (!fits(heading, lines.subList(0, size), omitted, footer)) break;
+            if (!fits(heading, lines.subList(0, size), omitted, footer, ordered.subList(0, size))) break;
             shown = size;
         }
         List<Map<String, Object>> blocks = new ArrayList<>();
@@ -60,6 +74,8 @@ public class SlackBotRenderer {
         for (int i = 0; i < shown; i++) {
             Task task = ordered.get(i);
             blocks.add(section(lines.get(i), task.getStatus() == TaskStatus.TODO ? task.getId() : null));
+            Map<String, Object> assignment = assignment(task);
+            if (assignment != null) blocks.add(assignment);
             text.add(lines.get(i));
         }
         if (shown < lines.size()) {
@@ -70,8 +86,8 @@ public class SlackBotRenderer {
         return new Rendered(String.join("\n", text), List.copyOf(blocks));
     }
 
-    private boolean fits(List<String> heading, List<String> lines, String omitted, String footer) {
-        if (heading.size() + lines.size() + 1 + (omitted.isEmpty() ? 0 : 1) > 50
+    private boolean fits(List<String> heading, List<String> lines, String omitted, String footer, List<Task> tasks) {
+        if (heading.size() + lines.size() + tasks.stream().filter(t -> assignment(t) != null).count() + 1 + (omitted.isEmpty() ? 0 : 1) > 50
                 || lines.stream().anyMatch(line -> line.length() > 3000)) return false;
         List<String> text = new ArrayList<>(heading); text.addAll(lines);
         if (!omitted.isEmpty()) text.add(omitted);
@@ -97,6 +113,26 @@ public class SlackBotRenderer {
         if (message.digestDate() != null && task.getDueDate() != null) value =
                 (task.getDueDate().isBefore(message.digestDate()) ? "⏰ 마감 지남" : task.getDueDate().equals(message.digestDate()) ? "📌 오늘 마감" : "📅 3일 이내 마감") + " · " + value;
         return value;
+    }
+
+    private Map<String, Object> assignment(Task task) {
+        if (task.getStatus() != TaskStatus.TODO || task.getAssignee() != null) return null;
+        var snapshot = task.getUnresolvedAssignee();
+        var candidates = snapshot == null ? List.<com.meetodo.task.UnresolvedAssignee.Candidate>of() : snapshot.candidates();
+        List<Map<String, Object>> elements = new ArrayList<>();
+        if (snapshot != null && ("AMBIGUOUS".equals(snapshot.reason()) || "TEAM_MISMATCH".equals(snapshot.reason())) && !candidates.isEmpty()) {
+            if (candidates.size() <= 3) for (var candidate : candidates) elements.add(Map.of(
+                    "type", "button", "action_id", ASSIGN_CANDIDATE_ACTION + "_" + candidate.id(),
+                    "text", Map.of("type", "plain_text", "text", bounded(candidate.name() + "(" + candidate.team() + ")으로 지정", 75)),
+                    "value", task.getId() + ":" + candidate.id()));
+            else elements.add(Map.of("type", "static_select", "action_id", ASSIGN_SELECT_ACTION,
+                    "placeholder", Map.of("type", "plain_text", "text", "담당자 선택"),
+                    "options", candidates.stream().limit(20).map(candidate -> Map.of(
+                            "text", Map.of("type", "plain_text", "text", bounded(candidate.name() + "(" + candidate.team() + ")", 75)),
+                            "value", candidate.id().toString())).toList()));
+        } else elements.add(Map.of("type", "users_select", "action_id", ASSIGN_USER_ACTION,
+                "placeholder", Map.of("type", "plain_text", "text", "담당자 지정")));
+        return Map.of("type", "actions", "block_id", ASSIGN_BLOCK_PREFIX + task.getId(), "elements", elements);
     }
 
     private Map<String, Object> section(String text, Long taskId) {

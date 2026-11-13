@@ -187,4 +187,39 @@ class SlackDirectMessageTests {
         verify(client,never()).conversationsOpen(any(ConversationsOpenRequest.class));
         verify(client,times(1)).chatPostMessage(any(ChatPostMessageRequest.class));
     }
+    @Test void assignmentSendsDmForExistingTaskAndKeepsActor() throws Exception {
+        // 사후 배정은 CREATED 여부와 관계없이 지정자와 채널 링크가 있는 DM을 한 번 보낸다.
+        enable(); add(7, "UHAECHAN", "EXISTING"); bot.send(message);
+        bot.assigned(7L, "UACTOR");
+        var requests = ArgumentCaptor.forClass(ChatPostMessageRequest.class); verify(client, times(2)).chatPostMessage(requests.capture());
+        assertThat(requests.getAllValues().getLast().getText()).contains("📝 새 할 일이 배정됐어요 (지정: <@UACTOR>)", "할 일 7");
+        assertThat(stored.getLast().getMessageType()).isEqualTo(SlackMessageReference.MessageType.DM);
+        assertThat(stored.getLast().getPermalink()).isEqualTo("https://meetodo.slack.com/archives/C1/p12");
+        verify(client).chatUpdate(any(ChatUpdateRequest.class));
+    }
+    @Test void disabledAssignmentDmStillRefreshesChannel() throws Exception {
+        // DM 설정을 끈 실행에서도 배정된 업무의 기존 메시지를 현재 상태로 갱신한다.
+        add(7, "UHAECHAN", "EXISTING"); bot.send(message); bot.assigned(7L, "UACTOR");
+        verify(client).chatUpdate(any(ChatUpdateRequest.class));
+        verify(client, never()).conversationsOpen(any(ConversationsOpenRequest.class));
+    }
+
+    @Test void directApiAssignmentWithoutMeetingSendsDmAndStoresReference() throws Exception {
+        // 회의나 채널 메시지가 없는 직접 API 업무도 실제 담당자에게 배정 DM을 전송한다.
+        enable(); add(7, "UHAECHAN", "EXISTING"); bot.assigned(7L, "UACTOR");
+        var request = ArgumentCaptor.forClass(ChatPostMessageRequest.class); verify(client).chatPostMessage(request.capture());
+        assertThat(request.getValue().getText()).contains("지정: <@UACTOR>", "할 일 7").doesNotContain("원래 채널 메시지");
+        assertThat(stored).hasSize(1); assertThat(stored.getFirst().getMeetingId()).isNull();
+        assertThat(stored.getFirst().getTaskIds()).isEqualTo("[7]");
+        verify(client, never()).chatGetPermalink(any(ChatGetPermalinkRequest.class));
+    }
+    @Test void completionRefreshesAssignmentDmWithoutMeeting() throws Exception {
+        // 직접 배정 DM에서도 완료 시 회의 조회나 날짜 알림으로 바꾸지 않고 현재 업무를 표시한다.
+        enable(); Task task = add(7, "UHAECHAN", "EXISTING"); bot.assigned(7L, "UACTOR");
+        when(taskService.completeFromSlack(7L, "UHAECHAN")).thenAnswer(call -> { task.changeStatus(TaskStatus.DONE, "UHAECHAN", Instant.EPOCH); return null; });
+        bot.complete("DUHAECHAN", "2.1", "UHAECHAN", "7");
+        var request = ArgumentCaptor.forClass(ChatUpdateRequest.class); verify(client).chatUpdate(request.capture());
+        assertThat(request.getValue().getText()).contains("완료 (<@UHAECHAN>)").doesNotContain("meetodo_assign_");
+    }
+
 }

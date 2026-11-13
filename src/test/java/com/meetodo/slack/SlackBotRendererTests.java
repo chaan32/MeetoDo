@@ -50,7 +50,7 @@ class SlackBotRendererTests {
     @Test void allFittingFiftyBlocksDoNotReserveUnneededOmission() {
         // 마지막 항목까지 50블록 안에 들어가면 생략 문구 때문에 빼지 않는다.
         var tasks = java.util.stream.IntStream.range(0,47).mapToObj(i -> {
-            Task task = Task.create("작업 " + i, null, null);
+            Task task = Task.create("작업 " + i, new Member("김", "민수", "개발", "U123"), null);
             ReflectionTestUtils.setField(task, "id", (long)i + 1); return task;
         }).toList();
         var result = renderer.render(message, tasks);
@@ -84,6 +84,40 @@ class SlackBotRendererTests {
         var result = renderer.renderDirectMessage(message,List.of(task),java.util.Map.of(7L,detail),
                 "https://meetodo.slack.com/archives/C1/p123");
         assertThat(result.text()).contains("동명이인 확인 필요: 지영", "마감일 없음");
+    }
+
+    private Task unresolved(String reason, int count) {
+        var candidates = java.util.stream.IntStream.range(0, count).mapToObj(i ->
+                new com.meetodo.task.UnresolvedAssignee.Candidate((long)i + 10, "지영", "팀" + i)).toList();
+        Task task = Task.create("담당 확인", null, null, null,
+                new com.meetodo.task.UnresolvedAssignee(reason, "지영", null, candidates, 0));
+        ReflectionTestUtils.setField(task, "id", 7L); return task;
+    }
+    @Test void threeCandidatesUseButtonsWithTaskAndMemberIds() {
+        // 저장된 후보 세 명까지 업무와 회원 ID를 함께 넣은 선택 버튼을 표시한다.
+        String json = renderer.render(message, List.of(unresolved("AMBIGUOUS", 3))).blocksJson();
+        assertThat(json).contains("meetodo_assign_candidate", "7:10", "7:12").doesNotContain("static_select");
+    }
+    @Test void fourCandidatesUseStaticSelectAndTaskBlockId() {
+        // 후보가 네 명이면 블록 ID에 업무를 담고 회원 ID를 옵션 값으로 사용한다.
+        String json = renderer.render(message, List.of(unresolved("TEAM_MISMATCH", 4))).blocksJson();
+        assertThat(json).contains("static_select", "meetodo_assign_select", "meetodo_assign_task:7", "\"value\":\"13\"");
+    }
+    @Test void missingMemberUsesUsersSelect() {
+        // 등록된 후보가 없는 미정 업무는 Slack 사용자 선택으로 지정한다.
+        assertThat(renderer.render(message, List.of(unresolved("NOT_FOUND", 0))).blocksJson())
+                .contains("users_select", "meetodo_assign_user", "meetodo_assign_task:7");
+    }
+    @Test void completedUnassignedTaskHasNoAssignmentControls() {
+        // 완료된 미정 업무는 담당 지정 UI를 다시 노출하지 않는다.
+        Task task = unresolved("AMBIGUOUS", 3); task.changeStatus(TaskStatus.DONE);
+        assertThat(renderer.render(message, List.of(task)).blocksJson()).doesNotContain("meetodo_assign_");
+    }
+    @Test void assignmentBlocksCountTowardFiftyBlockLimit() {
+        // 업무 본문과 담당 지정 블록을 모두 세어 Slack 상한을 지킨다.
+        var rendered = renderer.render(message, java.util.Collections.nCopies(100, unresolved("AMBIGUOUS", 3)));
+        assertThat(rendered.blocks()).hasSizeLessThanOrEqualTo(50);
+        assertThat(rendered.text()).contains("외 ").hasSizeLessThanOrEqualTo(40000);
     }
 
 }

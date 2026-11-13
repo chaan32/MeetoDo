@@ -60,7 +60,7 @@ class SlackBotConfigurationTests {
                 mock(SlackMessageReferenceRepository.class), mock(com.meetodo.task.TaskRepository.class),
                 mock(com.meetodo.task.TaskService.class), mock(com.meetodo.meeting.MeetingResults.class),
                 mock(com.meetodo.meeting.MeetingRepository.class), new com.fasterxml.jackson.databind.ObjectMapper(),
-                mock(org.springframework.transaction.PlatformTransactionManager.class));
+                mock(org.springframework.transaction.PlatformTransactionManager.class), mock(com.meetodo.member.MemberRepository.class));
     }
 
 }

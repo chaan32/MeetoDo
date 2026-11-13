@@ -32,8 +32,9 @@ public class SlackBotConfiguration {
     }
     @Bean SlackBotService slackBotService(MethodsClient client, Environment env, SlackMessageReferenceRepository refs,
             TaskRepository tasks, TaskService service, MeetingResults results, MeetingRepository meetings,
-            ObjectMapper mapper, PlatformTransactionManager manager) {
+            ObjectMapper mapper, PlatformTransactionManager manager, com.meetodo.member.MemberRepository members) {
         SlackBotService bot = new SlackBotService(client, env.getProperty("SLACK_CHANNEL_ID"), refs, tasks, service, results, meetings, mapper, manager);
+        bot.setMembers(members);
         bot.setDmEnabled(env.getProperty("MEETODO_SLACK_DM_ENABLED", Boolean.class, false));
         return bot;
     }
@@ -72,6 +73,31 @@ public class SlackBotConfiguration {
             if (payload.getContainer() != null && payload.getUser() != null && payload.getActions() != null && !payload.getActions().isEmpty())
                 service.complete(payload.getContainer().getChannelId(), payload.getContainer().getMessageTs(),
                         payload.getUser().getId(), payload.getActions().getFirst().getValue());
+            return ack;
+        });
+        app.blockAction(java.util.regex.Pattern.compile(SlackBotRenderer.ASSIGN_CANDIDATE_ACTION + "_[0-9]+"), (request, context) -> {
+            var ack = context.ack(); var payload = request.getPayload();
+            if (payload.getContainer() != null && payload.getUser() != null && payload.getActions() != null && !payload.getActions().isEmpty())
+                service.assignCandidate(payload.getContainer().getChannelId(), payload.getContainer().getMessageTs(),
+                        payload.getUser().getId(), payload.getActions().getFirst().getValue());
+            return ack;
+        });
+        app.blockAction(SlackBotRenderer.ASSIGN_SELECT_ACTION, (request, context) -> {
+            var ack = context.ack(); var payload = request.getPayload();
+            if (payload.getContainer() != null && payload.getUser() != null && payload.getActions() != null && !payload.getActions().isEmpty()) {
+                var action = payload.getActions().getFirst();
+                service.assignSelection(payload.getContainer().getChannelId(), payload.getContainer().getMessageTs(),
+                        payload.getUser().getId(), action.getBlockId(), action.getSelectedOption() == null ? null : action.getSelectedOption().getValue());
+            }
+            return ack;
+        });
+        app.blockAction(SlackBotRenderer.ASSIGN_USER_ACTION, (request, context) -> {
+            var ack = context.ack(); var payload = request.getPayload();
+            if (payload.getContainer() != null && payload.getUser() != null && payload.getActions() != null && !payload.getActions().isEmpty()) {
+                var action = payload.getActions().getFirst();
+                service.assignUser(payload.getContainer().getChannelId(), payload.getContainer().getMessageTs(),
+                        payload.getUser().getId(), action.getBlockId(), action.getSelectedUser());
+            }
             return ack;
         });
         SlackMeetingInputService input = inputs.getIfAvailable();

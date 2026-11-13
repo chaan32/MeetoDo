@@ -55,7 +55,7 @@ class PostgresMigrationTests {
         when(clock.instant()).thenReturn(fixed.instant());
     }
 
-    // 검증: 빈 PostgreSQL에 V1/V2/V3/V4를 적용하고 Hibernate가 엔티티 스키마를 검증한다.
+    // 검증: 빈 PostgreSQL에 V1/V2/V3/V4/V5를 적용하고 Hibernate가 엔티티 스키마를 검증한다.
     @Test void appliesInitialMigrationAndValidatesEntities() {
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '1'", String.class)).isEqualTo("1");
         assertThat(jdbc.queryForList("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'", String.class))
@@ -63,6 +63,7 @@ class PostgresMigrationTests {
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '2'", String.class)).isEqualTo("2");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '3'", String.class)).isEqualTo("3");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '4'", String.class)).isEqualTo("4");
+        assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '5'", String.class)).isEqualTo("5");
     }
 
     @Test void memberActiveDefaultsToTrueForExistingInsertContract() {
@@ -75,6 +76,44 @@ class PostgresMigrationTests {
         jdbc.update("INSERT INTO members(family_name,given_name,team,slack_user_id) VALUES ('김','민수','백엔드팀','UUNIQUE')");
         assertThatThrownBy(() -> jdbc.update("INSERT INTO members(family_name,given_name,team,slack_user_id) VALUES ('이','지영','디자인팀','UUNIQUE')"))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    // V5는 기존 Task를 보존하면서 지정자와 지정 시각을 nullable 컬럼으로 추가한다.
+    @Test void assignmentMetadataColumnsPreserveLegacyTasks() {
+        Long id = tasks.saveAndFlush(Task.create("담당자 지정 확인", null, TODAY)).getId();
+        assertThat(jdbc.queryForMap("SELECT assigned_by_slack_user_id, assigned_at FROM tasks WHERE id=?", id))
+                .containsEntry("assigned_by_slack_user_id", null).containsEntry("assigned_at", null);
+        jdbc.update("UPDATE tasks SET assigned_by_slack_user_id='UACTOR', assigned_at=now() WHERE id=?", id);
+        assertThat(jdbc.queryForObject("SELECT assigned_by_slack_user_id FROM tasks WHERE id=?", String.class, id)).isEqualTo("UACTOR");
+    }
+
+    // 지정 스냅샷은 숨기더라도 최초 미정 이유와 지정자·시각은 DB에서 보존한다.
+    @Test void assignmentMetadataAndOriginalEvidenceRoundTrip() {
+        var member = members.saveAndFlush(new com.meetodo.member.Member("전", "해찬", "백엔드팀", "UASSIGNEE"));
+        var snapshot = new UnresolvedAssignee("NOT_FOUND", "해찬", null, List.of(), 0);
+        Long id = tasks.saveAndFlush(Task.create("지정 이력 확인", null, TODAY, null, snapshot)).getId();
+        var response = taskService.assign(id, member.getId(), "UACTOR");
+        assertThat(response.warning()).isNull();
+        assertThat(jdbc.queryForObject("SELECT assigned_by_slack_user_id FROM tasks WHERE id=?", String.class, id)).isEqualTo("UACTOR");
+        assertThat(tasks.findById(id).orElseThrow().getUnresolvedAssignee()).isEqualTo(snapshot);
+    }
+
+    // 같은 미정 Task에 동시에 지정해도 첫 담당자와 지정자가 한 쌍으로 보존된다.
+    @Test void concurrentAssignmentsKeepOneFirstAssignee() throws Exception {
+        var firstMember = members.saveAndFlush(new com.meetodo.member.Member("김", "민수", "백엔드팀", "UFIRST"));
+        var secondMember = members.saveAndFlush(new com.meetodo.member.Member("전", "해찬", "백엔드팀", "USECOND"));
+        Long id = tasks.saveAndFlush(Task.create("동시 지정 확인", null, TODAY)).getId();
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            var first = executor.submit(() -> { start.await(); return taskService.assign(id, firstMember.getId(), "UFIRST"); });
+            var second = executor.submit(() -> { start.await(); return taskService.assign(id, secondMember.getId(), "USECOND"); });
+            start.countDown();
+            var a = first.get(15, TimeUnit.SECONDS); var b = second.get(15, TimeUnit.SECONDS);
+            assertThat(a.assignee().id()).isEqualTo(b.assignee().id());
+            assertThat(a.assignedBySlackUserId()).isEqualTo(b.assignedBySlackUserId());
+            assertThat(a.assignedBySlackUserId()).isEqualTo(a.assignee().slackUserId());
+        } finally { executor.shutdownNow(); }
     }
 
     // 검증: 다시 시작해도 적용된 V1은 재실행하지 않는다.

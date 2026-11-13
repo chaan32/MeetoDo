@@ -399,3 +399,15 @@ Swagger 확인: `MEETODO_ADMIN_SLACK_IDS=U본인실제ID ./gradlew bootRun --arg
 V4와 local H2 시작 SQL은 active=true 기본값·Slack ID 유니크를 적용한다. 기존 링크가 중복이면 자동 병합·삭제하지 않으므로 사용자가 충돌 데이터를 확인해야 한다. data/ 초기화는 수행하지 않는다. 실제 Slack 관리 UI 검증은 아직 하지 않았다.
 
 팀원 관리 전체 자동 검증: `./gradlew test bootJar --no-daemon` 성공, **501개 / 실패·오류·건너뜀0**. PostgreSQL 마이그레이션·H2 기존 행 보존·비활성 ID 배정 차단을 포함한다. DEV_SLACK_USER_ID가 다른 팀원의 ID와 겹치면 개발 seed 갱신을 건너뛰며 기존 연결을 덮어쓰지 않는다.
+
+## 미정 할 일 담당자 지정 — 단계2
+
+담당자 미정 TODO는 저장된 후보가 3명 이하면 지정 버튼, 4명 이상이면 선택 메뉴(저장된 후보 최대20명)로 제공한다. 미등록·이름 언급 없음은 Slack 사용자 선택을 제공하고, 선택한 사용자에 연결된 활성 팀원만 지정한다. 비활성 후보와 저장된 후보 밖 ID는 서버가 거절한다. 누구나 미정 TODO를 지정할 수 있지만 이미 지정됐거나 완료된 행은 바꾸지 않는다. 같은 Task의 동시 지정은 행 잠금으로 한 번만 확정한다. 다른 Task끼리 같은 업무로 동시에 지정하는 경쟁은 기존 중복 검사 한계로 남는다.
+
+Swagger: `PATCH /api/tasks/{id}/assignee`, 본문 `{"assigneeId":4}`, 헤더 `X-Slack-User-Id: U본인실제ID`. 등록·활성 팀원 ID로 바꾼다. 성공200 후 담당자·지정자·지정 시각을 확인한다. 같은 담당자의 같은 정규화 제목 TODO가 있으면409와 existingTaskId를 반환한다. 이 헤더는 인증 전 로컬 데모용이라는 한계가 동일하게 적용된다.
+
+미정 사유 스냅샷은 최초 판단의 이력으로 DB에 보존하며 배정 후 API·메시지의 경고에서는 숨긴다. DB 커밋 후 모든 관련 채널·DM 메시지를 현재 Task로 갱신하고, DM 설정이 켜져 있으면 실제 Slack ID인 새 담당자에게 지정자와 함께 알린다. 메시지 일부 갱신·DM 실패는 배정을 되돌리지 않는다. 웹훅·Discord 메시지에는 Slack 상호작용 버튼을 제공하지 않는다.
+
+추가 OAuth 권한은 없다. 기존 chat:write, im:write와 Interactivity를 사용한다. [사용자/정적 선택 메뉴](https://docs.slack.dev/reference/block-kit/block-elements/select-menu-element/), [block_actions의 selected_user/selected_option](https://docs.slack.dev/reference/interaction-payloads/block_actions-payload/), [chat.update](https://docs.slack.dev/reference/methods/chat.update/)에 맞춰 구현하며 실제 채널 확인은 사용자가 수행한다.
+
+단계2 최종 검증: `./gradlew test bootJar --no-daemon` 성공, **553개 / 실패·오류·건너뜀0**. API·후보/사용자 선택·멱등 지정·모든 메시지 갱신·지정 DM·PostgreSQL 동시 지정/마이그레이션을 포함한다. 실제 Slack·OpenAI 호출은 하지 않았다.
