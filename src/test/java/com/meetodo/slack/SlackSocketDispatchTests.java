@@ -80,6 +80,24 @@ class SlackSocketDispatchTests {
         assertThat(order).containsExactly("ack", "queued", "mutated");
     }
 
+    @Test void audioMessageWireAckPrecedesQueuedProcessing() throws Exception {
+        // 실제 음성 파일 이벤트도 소켓 ACK 뒤에만 다운로드·STT 작업을 실행한다.
+        var order = new ArrayList<String>(); var queue = new ArrayList<Runnable>();
+        var client = mock(SocketModeClient.class);
+        doAnswer(call -> { order.add("ack"); return null; }).when(client).sendSocketModeResponse(any(com.slack.api.socket_mode.response.SocketModeResponse.class));
+        var app = mock(App.class);
+        when(app.config()).thenReturn(AppConfig.builder().singleTeamBotToken("test-token").build());
+        when(app.run(any())).thenAnswer(call -> { order.add("audio"); return com.slack.api.bolt.response.Response.builder().statusCode(200).build(); });
+        var dispatch = new SlackSocketDispatch(app, job -> { order.add("queued"); queue.add(job); });
+        dispatch.receive(client, """
+                {"type":"events_api","envelope_id":"audio-1","payload":{"type":"event_callback","team_id":"T1",
+                 "event":{"type":"message","subtype":"file_share","channel":"D1","channel_type":"im","user":"U1",
+                 "ts":"1.0","files":[{"id":"F1"}]}}}
+                """);
+        assertThat(order).containsExactly("ack", "queued"); verify(app, never()).run(any());
+        queue.getFirst().run(); assertThat(order).containsExactly("ack", "queued", "audio");
+    }
+
     private void assertMenuDispatch(String operation, boolean immediate) throws Exception {
         var order = new ArrayList<String>(); var queue = new ArrayList<Runnable>();
         var client = mock(SocketModeClient.class);

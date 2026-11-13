@@ -49,6 +49,19 @@ class AudioMeetingServiceTests {
         assertThat(temporary.get()).doesNotExist();
     }
 
+    // 검증: Slack 음성도 기존 전사를 재사용하되 진행 메시지 연결 콜백을 Slack 회의 생성에 전달한다.
+    @Test void slackAudioPassesProgressCallbackAfterDeletingTemporaryFile() {
+        java.util.function.Consumer<com.meetodo.meeting.Meeting> beforeSave = meeting -> meeting.recordSlackMessage("D123", "1.2");
+        when(meetings.submitAudioFromSlack(any(), anyString(), anyLong(), eq(beforeSave), any())).thenAnswer(call -> {
+            assertThat(temporary.get()).doesNotExist();
+            return null;
+        });
+        service.submitFromSlack(audio("meeting.wav", new byte[]{1,2,3}), beforeSave);
+        verify(meetings).submitAudioFromSlack(eq(new MeetingRequest("김민수가 API를 수정한다.")),
+                eq("gpt-4o-mini-transcribe"), anyLong(), eq(beforeSave), any());
+        verify(meetings, never()).submitAudio(any(), anyString(), anyLong());
+    }
+
     // 검증: 활성 팀원 성명만 전달하며 팀·Slack ID·비활성 이름은 힌트에 넣지 않는다.
     @Test void hintsContainOnlyActiveFullNames() {
         Member active = new Member("김", "민수", "비밀팀", "SECRET_SLACK_ID");

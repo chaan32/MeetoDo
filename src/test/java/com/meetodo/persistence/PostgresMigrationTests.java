@@ -3,6 +3,8 @@ package com.meetodo.persistence;
 import com.meetodo.digest.*;
 import com.meetodo.task.*;
 import com.meetodo.notification.Notifier;
+import com.meetodo.slack.SlackAudioUpload;
+import com.meetodo.slack.SlackAudioUploadStore;
 import com.meetodo.slack.SlackMessageReference;
 import com.meetodo.slack.SlackMessageReferenceRepository;
 import java.time.*;
@@ -45,21 +47,22 @@ class PostgresMigrationTests {
     @Autowired com.meetodo.meeting.MeetingRepository meetings;
     @Autowired DailyDigestService digests;
     @Autowired SlackMessageReferenceRepository messageReferences;
+    @Autowired SlackAudioUploadStore audioUploads;
     @MockitoBean Notifier notifier;
     @MockitoBean Clock clock;
 
     @BeforeEach void clean() {
-        jdbc.execute("TRUNCATE task_events, slack_message_references, task_mentions, tool_call_logs, tasks, daily_digests, meetings, members RESTART IDENTITY CASCADE");
+        jdbc.execute("TRUNCATE slack_audio_uploads, task_events, slack_message_references, task_mentions, tool_call_logs, tasks, daily_digests, meetings, members RESTART IDENTITY CASCADE");
         Clock fixed = Clock.fixed(Instant.parse("2026-11-11T15:00:00Z"), ZoneId.of("Asia/Seoul"));
         when(clock.withZone(ZoneId.of("Asia/Seoul"))).thenReturn(fixed);
         when(clock.instant()).thenReturn(fixed.instant());
     }
 
-    // 검증: 빈 PostgreSQL에 V1/V2/V3/V4/V5/V6/V7/V8을 적용하고 Hibernate가 엔티티 스키마를 검증한다.
+    // 검증: 빈 PostgreSQL에 V1/V2/V3/V4/V5/V6/V7/V8/V9을 적용하고 Hibernate가 엔티티 스키마를 검증한다.
     @Test void appliesInitialMigrationAndValidatesEntities() {
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '1'", String.class)).isEqualTo("1");
         assertThat(jdbc.queryForList("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'", String.class))
-                .contains("members", "meetings", "tasks", "tool_call_logs", "task_mentions", "daily_digests", "slack_message_references");
+                .contains("members", "meetings", "tasks", "tool_call_logs", "task_mentions", "daily_digests", "slack_message_references", "slack_audio_uploads");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '2'", String.class)).isEqualTo("2");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '3'", String.class)).isEqualTo("3");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '4'", String.class)).isEqualTo("4");
@@ -67,6 +70,7 @@ class PostgresMigrationTests {
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '6'", String.class)).isEqualTo("6");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '7'", String.class)).isEqualTo("7");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '8'", String.class)).isEqualTo("8");
+        assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '9'", String.class)).isEqualTo("9");
     }
 
     @Test void memberActiveDefaultsToTrueForExistingInsertContract() {
@@ -476,7 +480,7 @@ class PostgresMigrationTests {
         jdbc.update("INSERT INTO reassignment_v7_upgrade.slack_message_references(channel_id,message_ts,task_ids) VALUES ('CLEGACY','7.000001','[1]')");
         jdbc.update("INSERT INTO reassignment_v7_upgrade.slack_message_references(task_ids,message_type,target_slack_user_id,delivery_status,error_code) VALUES ('[1]','DM','ULEGACY','FAILED','missing_scope')");
         var upgrade = Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
-                .schemas(schema).load();
+                .schemas(schema).target("8").load();
         assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(1);
         assertThat(upgrade.migrate().migrationsExecuted).isZero();
         assertThat(jdbc.queryForMap("SELECT title,due_date_warning FROM reassignment_v7_upgrade.tasks"))
@@ -489,6 +493,33 @@ class PostgresMigrationTests {
                 .containsEntry("channel_id", null).containsEntry("message_ts", null)
                 .containsEntry("target_slack_user_id", "ULEGACY").containsEntry("delivery_status", "FAILED")
                 .containsEntry("error_code", "missing_scope").containsEntry("notification_kind", "ASSIGNMENT");
+    }
+
+    // V9는 파일 식별자와 처리 상태만 저장하고 원본 파일·URL·토큰을 보관하지 않는다.
+    @Test void audioUploadRoundTripsWithoutPrivateFileData() {
+        assertThat(audioUploads.claim("FPOSTGRES1")).isTrue();
+        audioUploads.finish("FPOSTGRES1", 77L, "MEETING_PROCESSING_FAILED");
+        var upload = audioUploads.find("FPOSTGRES1").orElseThrow();
+        assertThat(upload.getStatus()).isEqualTo(SlackAudioUpload.Status.FAILED);
+        assertThat(upload.getMeetingId()).isEqualTo(77L);
+        assertThat(upload.getErrorCode()).isEqualTo("MEETING_PROCESSING_FAILED");
+        assertThat(jdbc.queryForObject("SELECT created_at FROM slack_audio_uploads WHERE file_id='FPOSTGRES1'", java.sql.Timestamp.class)).isNotNull();
+        assertThat(jdbc.queryForList("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='slack_audio_uploads'", String.class))
+                .containsExactlyInAnyOrder("id", "file_id", "status", "meeting_id", "error_code", "created_at");
+    }
+
+    // PostgreSQL의 서로 다른 연결에서도 같은 파일은 하나의 요청만 실행 권한을 얻는다.
+    @Test void concurrentAudioUploadClaimsHaveOneWinnerInPostgres() throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            Callable<Boolean> claim = () -> { start.await(); return audioUploads.claim("FPOSTGRES2"); };
+            var first = executor.submit(claim); var second = executor.submit(claim); start.countDown();
+            assertThat(List.of(first.get(15, TimeUnit.SECONDS), second.get(15, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(true, false);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM slack_audio_uploads", Long.class)).isEqualTo(1L);
+            assertThat(audioUploads.find("FPOSTGRES2").orElseThrow().getStatus()).isEqualTo(SlackAudioUpload.Status.PROCESSING);
+        } finally { executor.shutdownNow(); }
     }
 
     private void meeting(long id, String hash) {

@@ -44,6 +44,20 @@ public class MeetingApplicationService {
         return submit(request, MeetingSource.AUDIO, meeting -> meeting.recordTranscription(model, transcriptionTimeMs), meeting -> { });
     }
 
+    public MeetingResponse submitAudioFromSlack(MeetingRequest request, String model, long transcriptionTimeMs,
+                                               java.util.function.Consumer<Meeting> beforeSave) {
+        return submitAudioFromSlack(request, model, transcriptionTimeMs, beforeSave, meeting -> { });
+    }
+
+    public MeetingResponse submitAudioFromSlack(MeetingRequest request, String model, long transcriptionTimeMs,
+                                               java.util.function.Consumer<Meeting> beforeSave,
+                                               java.util.function.Consumer<Meeting> discardProgress) {
+        return submit(request, MeetingSource.SLACK_AUDIO, meeting -> {
+            meeting.recordTranscription(model, transcriptionTimeMs);
+            beforeSave.accept(meeting);
+        }, discardProgress);
+    }
+
     private MeetingResponse submit(MeetingRequest request, MeetingSource source,
                                    java.util.function.Consumer<Meeting> beforeSave,
                                    java.util.function.Consumer<Meeting> discardProgress) {

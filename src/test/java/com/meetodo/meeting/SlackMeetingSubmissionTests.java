@@ -44,6 +44,36 @@ class SlackMeetingSubmissionTests {
         },m -> { });
         assertThat(order).containsExactly("started","agent");
     }
+    // Slack 음성의 전사 정보·원래 스레드 진행 위치를 저장한 뒤 동일 에이전트/알림 경로를 탄다.
+    @Test void slackAudioKeepsSourceTranscriptionAndProgressBeforeAgent() {
+        when(agent.process(any())).thenAnswer(call -> {
+            Meeting meeting = call.getArgument(0);
+            assertThat(meeting.getSource()).isEqualTo(MeetingSource.SLACK_AUDIO);
+            assertThat(meeting.getSttModel()).isEqualTo("mock-stt");
+            assertThat(meeting.getTranscriptionTimeMs()).isEqualTo(123L);
+            assertThat(meeting.getSlackChannelId()).isEqualTo("D123");
+            assertThat(meeting.getSlackMessageTs()).isEqualTo("1.2");
+            return new AgentResult("완료", 1, 0, 0);
+        });
+        var response = service.submitAudioFromSlack(new MeetingRequest("Slack 음성 새 본문"), "mock-stt", 123,
+                m -> { assertThat(m.getId()).isNull(); m.recordSlackMessage("D123", "1.2"); });
+        assertThat(response.status()).isEqualTo(MeetingStatus.DONE);
+        verify(notifier).send(any());
+    }
+
+    // 같은 전사문은 기존 회의를 반환하며 원래 회의 메시지 위치·출처를 바꾸지 않는다.
+    @Test void duplicateTranscriptDoesNotReplaceOriginalMeetingMessage() {
+        var request = new MeetingRequest("Slack 음성 중복 본문");
+        var original = service.submitAudioFromSlack(request, "mock-stt", 10,
+                m -> m.recordSlackMessage("D123", "1.2"));
+        var callbacks = new ArrayList<String>();
+        var repeated = service.submitAudioFromSlack(request, "mock-stt", 20, m -> callbacks.add("before"));
+        assertThat(repeated.meetingId()).isEqualTo(original.meetingId());
+        assertThat(callbacks).isEmpty();
+        assertThat(meetings.findById(original.meetingId()).orElseThrow().getSlackMessageTs()).isEqualTo("1.2");
+        verify(agent, times(1)).process(any());
+    }
+
     @Test void exactDuplicateDoesNotStartMessageOrAgentAgain() {
         // API에서 등록한 동일 본문도 Slack에서는 재처리나 새 진행 알림을 만들지 않는다.
         var original=service.submit(new MeetingRequest("같은 회의"));

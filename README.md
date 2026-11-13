@@ -446,7 +446,7 @@ Slack 앱 설정의 **App Home → Home Tab 활성화**, **Event Subscriptions �
 
 응답은 `transcript`, `sttModel`, `transcriptionTimeMs`, `meeting`이다. 새 회의의 source=AUDIO와 모델·전사 시간을 V7으로 저장하고 GET 회의 응답에도 제공한다. 전사·입력 검증 실패면 Meeting을 만들지 않는다. 같은 전사문의 SHA-256이 이미 있으면 기존 회의를 반환하며 기존 출처/모델을 덮어쓰지 않는다. 이 경우 STT는 이미 호출됐으므로 현재 요청의 전사 시간은 오디오 응답에서 확인한다. 전사 시간은 에이전트 처리 시간과 별도다.
 
-화자 구분이 없어 “제가 할게요”만으로는 담당자를 알 수 없다. AUDIO 전용 프롬프트는 이를 unassigned:NONE으로 남기게 안내하고, Slack의 사용자 선택/담당자 지정으로 사람이 확정한다. 텍스트 실측 프롬프트에는 이 음성 전용 안내를 섞지 않는다. Slack 파일 업로드 입력은 다음 단계 후보이며 이번에 구현하지 않았다.
+화자 구분이 없어 “제가 할게요”만으로는 담당자를 알 수 없다. AUDIO 전용 프롬프트는 이를 unassigned:NONE으로 남기게 안내하고, Slack의 사용자 선택/담당자 지정으로 사람이 확정한다. 텍스트 실측 프롬프트에는 이 음성 전용 안내를 섞지 않는다. REST 구현 당시 Slack 파일 입력은 제외했으며, 현재 구현 범위는 아래 Slack 음성 파일 입력 절을 따른다.
 
 실행은 앞의 키체인 기반 OpenAI·Slack 환경변수에 `export MEETODO_STT_MODEL=gpt-transcribe`를 더하고 `local,openai`로 시작한다. Swagger에서 POST /api/meetings/audio → Try it out → file 선택 → Execute. 명시적 담당자가 있는 짧은 녹음과 “제가 배포 로그를 정리할게요” 녹음을 각각 보내 전사문·source·전사 시간·할 일·미정 상태와 Slack 지정까지 확인한다. CLI 예:
 
@@ -489,3 +489,21 @@ G 최종 자동 검증: `./gradlew test bootJar --no-daemon` 성공, **914개 / 
 G 날짜 조사 보완: 서버는 날짜 끝의 `까지`/`까지는`을 한 번 정리해 `내일까지`·`다음 주 금요일까지`·`11월20일까지`도 계산한다. 원문 근거 검사도 같은 정규화를 사용한다. `이번 주 안에`는 그대로 유지한다. `전까지`/`전까지는`은 당일 포함 여부가 달라질 수 있어 지원하지 않고 마감일 없음+확인 경고로 남긴다. 임의의 조사·어미를 모두 제거하지 않는다. G 실측은 주 단위3표현9/9였지만 내일까지3회는 처리하지 못한 회귀였고, 수정 후 실제 실측은 별도로 기록한다(각3회 표본, 알림SKIPPED). 내일만 재측정하려면 `zsh ./measure.sh G-내일`을 사용한다. **매 회차 data/ 삭제 및 같은 이름 /tmp 응답·로그 덮어쓰기**가 있으므로 먼저 서버 종료·개발 데이터와 기존 로그를 백업한다.
 
 조사 보완 전체 검증: `./gradlew test bootJar --no-daemon` 성공, **937개 / 실패·오류·건너뜀0**. 실제 G-내일 재측정은 사용자 확인 전이다.
+
+## Slack 음성 파일 입력 (구현, 실제 Slack 확인 전)
+
+봇과의 DM에 파일을 보내거나, 채널에서 **파일이 붙은 같은 메시지에 @MeetoDo를 멘션**하면 처리한다. 멘션 없는 채널 파일과 텍스트만 있는 메시지는 음성 입력으로 처리하지 않는다. 파일 첨부의 `message/file_share` subtype도 등록한다. 파일 전역 이벤트를 받지 않고 DM `message.im`과 채널 `app_mention`만 사용한다.
+
+추가 설정: OAuth & Permissions의 Bot Token Scopes에 **files:read, im:history, app_mentions:read**, Event Subscriptions의 Subscribe to bot events에 **message.im, app_mention**을 추가한다. 기존 chat:write/im:write/commands, Socket Mode connections:write, Interactivity·Home 설정은 유지한다. 권한 추가 후 **Reinstall to Workspace**하고 서버를 재시작한다. 봇 토큰이 바뀌었다면 키체인 값도 갱신한다. App Home Messages Tab과 사용자 메시지 전송 설정이 켜져 있어야 DM 업로드가 가능하다. channels:history·groups:history·files:write·users:read는 이 입력을 위해 추가하지 않는다.
+
+흐름은 wire ACK → 기존 회의 처리 executor → 원래 메시지의 thread_ts(없으면 ts)에 `⏳ 음성 변환 중...` 게시 → file ID DB 선점 → 다운로드 → 공통 AudioMeetingService 전사 → 공통 회의 처리다. 새 회의는 SLACK_AUDIO·전사 모델/시간·진행 메시지 좌표를 저장한다. AFTER_COMMIT 봇 알림이 진행 메시지를 결과로 수정하고 새 배정 DM·완료 버튼·Home 갱신도 기존 서비스를 사용한다. 음성의 1인칭만으로 업로더를 담당자로 추측하지 않는다.
+
+DB `slack_audio_uploads`는 file_id unique와 PROCESSING/DONE/FAILED·meeting_id·고정 error_code·created_at만 저장한다. V9 추가 테이블이며 local H2는 기존 update, Docker PostgreSQL은 Flyway+validate를 쓴다. 데이터 초기화는 필요 없다. 진행 게시 실패는 선점·회의 저장 없이 초대 안내한다. 동일 file ID는 동시 실행/재시작 후에도 전사하지 않고 기존 회의/처리 중/실패 안내를 한다. **같은 내용을 다시 업로드해 새 file ID가 생기면 STT는 다시 실행**되며 전사문이 같을 때 기존 회의 해시가 재사용한다. 바이트 해시 중복 제거를 구현한 것은 아니다.
+
+다운로드는 files.info로 새 메타데이터를 읽고 Slack hosted 파일만 허용한다. 정확한 HTTPS files.slack.com 호스트(기본/443포트, userinfo 없음), 자동 리다이렉트 차단, Bearer 봇 토큰, 연결3초/읽기30초다. 파일명/신고 크기와 실제 스트림25,000,000바이트 상한을 모두 검증한다. 기존 허용 형식만 받으며 이름 없는/확장자 없는 클립은 지원 filetype/MIME으로 보완한다. 명시된 미지원 확장자는 보완하지 않는다. 파일 다운로드는 메모리이고 전사 임시 파일은 기존 finally 정리 경로를 쓴다. 원본·파일명·다운로드 URL·토큰을 앱 DB/로그에 남기지 않으며 공급자 예외는 고정 코드로 바꾼다. Slack 플랫폼 자체의 업로드 파일은 앱이 삭제하지 않는다.
+
+근거: [message.im 및 im:history](https://docs.slack.dev/reference/events/message.im/), [app_mention 및 미초대 시 이벤트 미전달](https://docs.slack.dev/reference/events/app_mention/), [files.info](https://docs.slack.dev/reference/methods/files.info/), [파일 다운로드 보안](https://docs.slack.dev/messaging/working-with-files/), [Socket Mode ACK](https://docs.slack.dev/apis/events-api/using-socket-mode/). 설치된 SDK1.54의 MessageEvent/MessageFileShareEvent/AppMentionEvent의 files·threadTs 필드를 확인했다.
+
+알려진 한계: 봇이 미초대라 이벤트 자체를 받지 못하면 안내할 수 없다. 이벤트 수신 후 게시가 거절된 경우에만 `/invite @MeetoDo`를 안내한다. 파일 실패는 자동 재시도하지 않으며 서버 중단으로 PROCESSING에 남은 기록의 복구도 이번 범위가 아니다. 바이트 동일성·화자 구분·긴 음성 분할을 처리하지 않는다. 원격 파일과 리다이렉트가 필요한 다운로드는 거절한다. 이전 메시지와 DM의 갱신은 DB 변경과 원자적이지 않다.
+
+Slack 음성 입력 최종 자동 검증: `./gradlew test bootJar --no-daemon` 성공, **1,037개 / 실패·오류·건너뜀0**. 실제 Slack 파일 업로드·음성 전사 실행은 사용자 확인 전이며 자동 테스트는 mock이다.

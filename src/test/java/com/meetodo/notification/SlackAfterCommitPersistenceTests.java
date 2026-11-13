@@ -85,6 +85,42 @@ class SlackAfterCommitPersistenceTests {
         assertThat(meeting.getSlackChannelId()).isEqualTo("CTEST");
         assertThat(meeting.getSlackMessageTs()).isEqualTo("123.456");
     }
+    // Slack 음성도 커밋 후 기존 진행 메시지를 수정하고 새 배정 담당자 DM을 한 번 전송한다.
+    @Test void slackAudioUpdatesOriginalThreadAndSendsNewAssigneeDm() throws Exception {
+        bot.setDmEnabled(true);
+        var member = members.save(new com.meetodo.member.Member("전", "음성", "백엔드팀", "UVOICEASSIGNEE"));
+        when(agent.process(any(Meeting.class))).thenAnswer(call -> {
+            Meeting meeting = call.getArgument(0);
+            tasks.createFromTool("Slack 음성 담당 업무", member, null, meeting);
+            return new AgentResult("완료", 1, 1, 0);
+        });
+        var updated = new com.slack.api.methods.response.chat.ChatUpdateResponse(); updated.setOk(true);
+        when(client.chatUpdate(any(com.slack.api.methods.request.chat.ChatUpdateRequest.class))).thenReturn(updated);
+        var opened = new com.slack.api.methods.response.conversations.ConversationsOpenResponse(); opened.setOk(true);
+        var channel = new com.slack.api.model.Conversation(); channel.setId("DVOICEASSIGNEE"); opened.setChannel(channel);
+        when(client.conversationsOpen(any(com.slack.api.methods.request.conversations.ConversationsOpenRequest.class))).thenReturn(opened);
+        var link = new com.slack.api.methods.response.chat.ChatGetPermalinkResponse(); link.setOk(true);
+        link.setPermalink("https://example.slack.com/archives/DVOICEORIGIN/p321123");
+        when(client.chatGetPermalink(any(com.slack.api.methods.request.chat.ChatGetPermalinkRequest.class))).thenReturn(link);
+        var posted = new ChatPostMessageResponse(); posted.setOk(true); posted.setChannel("DVOICEASSIGNEE"); posted.setTs("322.124");
+        when(client.chatPostMessage(any(ChatPostMessageRequest.class))).thenReturn(posted);
+        var response = application.submitAudioFromSlack(new com.meetodo.meeting.dto.MeetingRequest("새 Slack 음성 담당자 DM 회귀"),
+                "mock-stt", 10, meeting -> meeting.recordSlackMessage("DVOICEORIGIN", "321.123"));
+        var meeting = meetings.findById(response.meetingId()).orElseThrow();
+        assertThat(meeting.getSource()).isEqualTo(MeetingSource.SLACK_AUDIO);
+        assertThat(meeting.getSlackChannelId()).isEqualTo("DVOICEORIGIN");
+        assertThat(meeting.getSlackMessageTs()).isEqualTo("321.123");
+        var update = org.mockito.ArgumentCaptor.forClass(com.slack.api.methods.request.chat.ChatUpdateRequest.class);
+        verify(client).chatUpdate(update.capture());
+        assertThat(update.getValue().getChannel()).isEqualTo("DVOICEORIGIN");
+        assertThat(update.getValue().getTs()).isEqualTo("321.123");
+        var dm = org.mockito.ArgumentCaptor.forClass(ChatPostMessageRequest.class);
+        verify(client).chatPostMessage(dm.capture());
+        assertThat(dm.getValue().getChannel()).isEqualTo("DVOICEASSIGNEE");
+        assertThat(dm.getValue().getText()).contains("새 할 일이 배정됐어요");
+        assertThat(references.findByChannelIdAndMessageTs("DVOICEASSIGNEE", "322.124")).isPresent();
+    }
+
     // 실제 DB에서 다시 읽은 참조를 클릭해 완료·현재 상태 조회·원래 메시지 갱신까지 검증한다.
     @Test void clickCompletesStoredTaskAndRebuildsMessageFromDatabase() throws Exception {
         var updated = new com.slack.api.methods.response.chat.ChatUpdateResponse(); updated.setOk(true);

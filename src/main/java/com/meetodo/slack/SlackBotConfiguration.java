@@ -65,6 +65,16 @@ public class SlackBotConfiguration {
             @Qualifier("slackMeetingExecutor") ThreadPoolTaskExecutor executor, Clock clock) {
         return new SlackMeetingInputService(client, meetings, bot, executor, clock);
     }
+    @Bean @Profile("openai") @Conditional(BotNotifierConfigured.class)
+    SlackAudioDownloader slackAudioDownloader(MethodsClient client, Environment env) {
+        return new SlackAudioDownloader(client, env.getProperty("SLACK_BOT_TOKEN"));
+    }
+    @Bean @Profile("openai") @Conditional(BotNotifierConfigured.class)
+    SlackAudioInputService slackAudioInputService(MethodsClient client, SlackAudioDownloader downloader,
+            com.meetodo.audio.AudioMeetingService audio, SlackAudioUploadStore uploads,
+            @Qualifier("slackMeetingExecutor") ThreadPoolTaskExecutor executor) {
+        return new SlackAudioInputService(client, downloader, audio, uploads, executor);
+    }
     @Bean SlackHomeService slackHomeService(MethodsClient client, com.meetodo.member.MemberRepository members,
             TaskRepository tasks, TaskService service, com.meetodo.member.AdminAuthorization admins, Clock clock) {
         return new SlackHomeService(client, members, tasks, service, admins, clock);
@@ -79,7 +89,7 @@ public class SlackBotConfiguration {
         edits.setManagement(admins, members);
         return edits;
     }
-    @Bean App slackBoltApp(Environment env, SlackBotService service, ObjectProvider<SlackMeetingInputService> inputs, SlackTaskEditService edits, SlackHomeService homes, SlackMemberManagementService memberManagement) {
+    @Bean App slackBoltApp(Environment env, SlackBotService service, ObjectProvider<SlackMeetingInputService> inputs, SlackTaskEditService edits, SlackHomeService homes, SlackMemberManagementService memberManagement, ObjectProvider<SlackAudioInputService> audioInputs) {
         App app = new App(AppConfig.builder().singleTeamBotToken(env.getProperty("SLACK_BOT_TOKEN")).build());
         app.event(com.slack.api.model.event.AppHomeOpenedEvent.class, (request, context) -> {
             var ack = context.ack();
@@ -127,6 +137,8 @@ public class SlackBotConfiguration {
         edits.register(app);
         SlackMeetingInputService input = inputs.getIfAvailable();
         if (input != null) input.register(app);
+        SlackAudioInputService audioInput = audioInputs.getIfAvailable();
+        if (audioInput != null) audioInput.register(app);
         return app;
     }
     private static boolean home(com.slack.api.app_backend.interactive_components.payload.BlockActionPayload payload) {

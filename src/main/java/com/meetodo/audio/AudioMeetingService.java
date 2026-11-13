@@ -20,7 +20,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class AudioMeetingService {
-    private static final int MAX_BYTES = 25_000_000;
+    public static final int MAX_BYTES = 25_000_000;
     private static final Set<String> EXTENSIONS = Set.of("flac", "mp3", "mp4", "mpeg", "mpga", "m4a", "ogg", "wav", "webm");
     private final ObjectProvider<SpeechTranscriber> transcribers;
     private final MemberRepository members;
@@ -33,7 +33,21 @@ public class AudioMeetingService {
         this.meetings = meetings;
     }
 
+    public AudioMeetingResponse submitFromSlack(MultipartFile file, java.util.function.Consumer<com.meetodo.meeting.Meeting> beforeSave) {
+        return submitFromSlack(file, beforeSave, meeting -> { });
+    }
+
+    public AudioMeetingResponse submitFromSlack(MultipartFile file, java.util.function.Consumer<com.meetodo.meeting.Meeting> beforeSave,
+                                                java.util.function.Consumer<com.meetodo.meeting.Meeting> discardProgress) {
+        return submit(file, java.util.Objects.requireNonNull(beforeSave), java.util.Objects.requireNonNull(discardProgress));
+    }
+
     public AudioMeetingResponse submit(MultipartFile file) {
+        return submit(file, null, meeting -> { });
+    }
+
+    private AudioMeetingResponse submit(MultipartFile file, java.util.function.Consumer<com.meetodo.meeting.Meeting> beforeSave,
+                                        java.util.function.Consumer<com.meetodo.meeting.Meeting> discardProgress) {
         String extension = extension(file);
         SpeechTranscriber transcriber = transcribers.getIfAvailable();
         if (transcriber == null) throw new AudioMeetingException(HttpStatus.NOT_FOUND,
@@ -58,7 +72,9 @@ public class AudioMeetingService {
                         "전사 결과는 비어 있지 않은 20000자 이하의 회의록이어야 합니다.");
             transcript = transcript.strip();
             String model = transcriber.model();
-            MeetingResponse meeting = meetings.submitAudio(new MeetingRequest(transcript), model, elapsed);
+            MeetingResponse meeting = beforeSave == null
+                    ? meetings.submitAudio(new MeetingRequest(transcript), model, elapsed)
+                    : meetings.submitAudioFromSlack(new MeetingRequest(transcript), model, elapsed, beforeSave, discardProgress);
             return new AudioMeetingResponse(transcript, model, elapsed, meeting);
         } catch (IOException failure) {
             throw transcriptionFailed();
@@ -71,8 +87,12 @@ public class AudioMeetingService {
     }
 
     private String extension(MultipartFile file) {
-        if (file == null || file.isEmpty() || file.getSize() > MAX_BYTES) throw invalidAudio();
-        String filename = file.getOriginalFilename();
+        if (file == null || file.isEmpty()) throw invalidAudio();
+        return validateFilename(file.getOriginalFilename(), file.getSize());
+    }
+
+    public static String validateFilename(String filename, long size) {
+        if (size <= 0 || size > MAX_BYTES) throw invalidAudio();
         int dot = filename == null ? -1 : filename.lastIndexOf('.');
         if (dot <= 0) throw invalidAudio();
         String extension = filename.substring(dot + 1).toLowerCase(Locale.ROOT);
@@ -93,7 +113,7 @@ public class AudioMeetingService {
         return hint.toString();
     }
 
-    private AudioMeetingException invalidAudio() {
+    private static AudioMeetingException invalidAudio() {
         return new AudioMeetingException(HttpStatus.BAD_REQUEST, "INVALID_AUDIO", "지원하는 음성 파일을 25MB 이하로 첨부하세요.");
     }
 
