@@ -10,7 +10,7 @@ import com.meetodo.member.MemberRepository;
 import com.meetodo.meeting.Meeting;
 import com.meetodo.meeting.MeetingSource;
 import com.meetodo.task.dto.CreateTaskRequest;
-import com.meetodo.task.dto.UpdateTaskStatusRequest;
+import com.meetodo.task.dto.UpdateTaskRequest;
 import com.meetodo.task.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -83,7 +83,9 @@ class TaskServiceTests {
         when(taskRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(task));
         when(taskRepository.save(task)).thenReturn(task);
 
-        var result = taskService.updateStatus(1L, new UpdateTaskStatusRequest(TaskStatus.DONE));
+        var request = new UpdateTaskRequest();
+        request.setStatus(TaskStatus.DONE);
+        var result = taskService.update(1L, request, "UACTOR");
 
         assertThat(result.status()).isEqualTo(TaskStatus.DONE);
         verify(taskRepository).save(task);

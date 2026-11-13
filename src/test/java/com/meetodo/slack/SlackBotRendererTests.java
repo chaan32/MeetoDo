@@ -51,7 +51,7 @@ class SlackBotRendererTests {
         // 마지막 항목까지 50블록 안에 들어가면 생략 문구 때문에 빼지 않는다.
         var tasks = java.util.stream.IntStream.range(0,47).mapToObj(i -> {
             Task task = Task.create("작업 " + i, new Member("김", "민수", "개발", "U123"), null);
-            ReflectionTestUtils.setField(task, "id", (long)i + 1); return task;
+            ReflectionTestUtils.setField(task, "id", (long)i + 1); task.changeStatus(TaskStatus.DONE); return task;
         }).toList();
         var result = renderer.render(message, tasks);
         assertThat(result.blocks()).hasSize(50);
@@ -118,6 +118,47 @@ class SlackBotRendererTests {
         var rendered = renderer.render(message, java.util.Collections.nCopies(100, unresolved("AMBIGUOUS", 3)));
         assertThat(rendered.blocks()).hasSizeLessThanOrEqualTo(50);
         assertThat(rendered.text()).contains("외 ").hasSizeLessThanOrEqualTo(40000);
+    }
+
+    @Test void taskMenuOffersTitleDueAndDeleteForTodoTask() {
+        // 미완료 업무는 제목·마감일 수정과 삭제 메뉴를 업무 ID와 함께 제공한다.
+        String json = renderer.render(message, List.of(task("U123ABC"))).blocksJson();
+        assertThat(json).contains("overflow", "meetodo_task_menu", "title:7", "due:7", "delete:7").doesNotContain("reopen:7");
+    }
+
+    @Test void completedTaskMenuIncludesReopenWithoutCompletionOrAssignment() {
+        // 완료 업무의 메뉴에는 재개가 있고 완료·담당 지정 버튼은 없다.
+        Task task = unresolved("AMBIGUOUS", 3); task.changeStatus(TaskStatus.DONE);
+        String json = renderer.render(message, List.of(task)).blocksJson();
+        assertThat(json).contains("overflow", "title:7", "due:7", "delete:7", "reopen:7")
+                .doesNotContain(SlackBotRenderer.COMPLETE_ACTION, "meetodo_assign_");
+    }
+
+    @Test void deletedTaskRendersTombstoneWithoutAnyActions() {
+        // 삭제 이력은 본문에 남지만 수정·재개·완료·담당 지정 동작은 모두 사라진다.
+        Task task = unresolved("AMBIGUOUS", 3); task.softDelete();
+        var rendered = renderer.render(message, List.of(task));
+        assertThat(rendered.text()).contains("🗑 삭제됨 · 담당 확인");
+        assertThat(rendered.blocksJson()).doesNotContain("accessory", "overflow", "\"type\":\"actions\"",
+                SlackBotRenderer.TASK_MENU_ACTION, SlackBotRenderer.COMPLETE_ACTION, "meetodo_assign_");
+    }
+
+    @Test void todoMenusAndCompletionActionsFitExactlyFiftyBlocks() {
+        // 23개 미완료 업무는 메뉴가 있는 본문 23개와 액션 23개를 포함해 정확히 50블록이다.
+        var boundaryMessage = new NotificationMessage(1L, "회의", List.of("요약 1", "요약 2"), List.of(), "회의 1");
+        var rendered = renderer.render(boundaryMessage, java.util.Collections.nCopies(23, task("U123ABC")));
+        assertThat(rendered.blocks()).hasSize(50);
+        assertThat(rendered.blocks().stream().filter(block -> block.containsKey("accessory"))).hasSize(23);
+        assertThat(rendered.text()).doesNotContain("외 ");
+    }
+
+    @Test void overflowingTodoMenusReserveOmissionBlock() {
+        // 24번째 업무가 상한을 넘으면 생략 안내까지 포함해 50블록 아래로 줄인다.
+        var boundaryMessage = new NotificationMessage(1L, "회의", List.of("요약 1", "요약 2"), List.of(), "회의 1");
+        var rendered = renderer.render(boundaryMessage, java.util.Collections.nCopies(24, task("U123ABC")));
+        assertThat(rendered.blocks()).hasSize(49);
+        assertThat(rendered.blocks().stream().filter(block -> block.containsKey("accessory"))).hasSize(22);
+        assertThat(rendered.text()).contains("외 2건");
     }
 
 }

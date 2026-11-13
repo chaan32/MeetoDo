@@ -49,13 +49,13 @@ class PostgresMigrationTests {
     @MockitoBean Clock clock;
 
     @BeforeEach void clean() {
-        jdbc.execute("TRUNCATE slack_message_references, task_mentions, tool_call_logs, tasks, daily_digests, meetings, members RESTART IDENTITY CASCADE");
+        jdbc.execute("TRUNCATE task_events, slack_message_references, task_mentions, tool_call_logs, tasks, daily_digests, meetings, members RESTART IDENTITY CASCADE");
         Clock fixed = Clock.fixed(Instant.parse("2026-11-11T15:00:00Z"), ZoneId.of("Asia/Seoul"));
         when(clock.withZone(ZoneId.of("Asia/Seoul"))).thenReturn(fixed);
         when(clock.instant()).thenReturn(fixed.instant());
     }
 
-    // 검증: 빈 PostgreSQL에 V1/V2/V3/V4/V5를 적용하고 Hibernate가 엔티티 스키마를 검증한다.
+    // 검증: 빈 PostgreSQL에 V1/V2/V3/V4/V5/V6를 적용하고 Hibernate가 엔티티 스키마를 검증한다.
     @Test void appliesInitialMigrationAndValidatesEntities() {
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '1'", String.class)).isEqualTo("1");
         assertThat(jdbc.queryForList("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'", String.class))
@@ -64,6 +64,7 @@ class PostgresMigrationTests {
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '3'", String.class)).isEqualTo("3");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '4'", String.class)).isEqualTo("4");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '5'", String.class)).isEqualTo("5");
+        assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '6'", String.class)).isEqualTo("6");
     }
 
     @Test void memberActiveDefaultsToTrueForExistingInsertContract() {
@@ -114,6 +115,88 @@ class PostgresMigrationTests {
             assertThat(a.assignedBySlackUserId()).isEqualTo(b.assignedBySlackUserId());
             assertThat(a.assignedBySlackUserId()).isEqualTo(a.assignee().slackUserId());
         } finally { executor.shutdownNow(); }
+    }
+
+    // soft delete는 전체 Task 목록에서 제외한다.
+    @Test void deletedTaskIsExcludedFromTaskList() {
+        Long id = deletedTask(null, TODAY);
+        assertThat(tasks.findAllByOrderByCreatedAtDesc()).noneMatch(task -> task.getId().equals(id));
+    }
+
+    // 담당자별 목록에서도 삭제한 Task를 제외한다.
+    @Test void deletedTaskIsExcludedFromAssigneeList() {
+        var member = members.saveAndFlush(new com.meetodo.member.Member("전", "해찬", "백엔드팀", "UDELETED"));
+        Long id = deletedTask(member, TODAY);
+        assertThat(tasks.findAllByAssigneeOrderByCreatedAtDesc(member)).noneMatch(task -> task.getId().equals(id));
+    }
+
+    // 미정 TODO 중복 후보에 삭제한 Task를 넣지 않는다.
+    @Test void deletedTaskIsExcludedFromUnassignedDuplicateCandidates() {
+        Long id = deletedTask(null, TODAY);
+        assertThat(tasks.findAllByAssigneeIsNullAndStatusOrderByCreatedAtDesc(TaskStatus.TODO)).noneMatch(task -> task.getId().equals(id));
+    }
+
+    // 지정 TODO 중복 후보도 같은 soft delete 조건을 쓴다.
+    @Test void deletedTaskIsExcludedFromAssignedDuplicateCandidates() {
+        var member = members.saveAndFlush(new com.meetodo.member.Member("전", "해찬", "백엔드팀", "UDELETED"));
+        Long id = deletedTask(member, TODAY);
+        assertThat(tasks.findAllByAssigneeAndStatusOrderByCreatedAtDesc(member,TaskStatus.TODO)).noneMatch(task -> task.getId().equals(id));
+    }
+
+    // 삭제된 마감 Task는 다이제스트 대상에서 제외한다.
+    @Test void deletedTaskIsExcludedFromDigest() {
+        Long id = deletedTask(null, TODAY);
+        assertThat(tasks.findDigestTasks(TaskStatus.TODO,TODAY.plusDays(3))).noneMatch(task -> task.getId().equals(id));
+    }
+
+    // 삭제된 기한 없는 Task는 제외 건수에도 넣지 않는다.
+    @Test void deletedTaskIsExcludedFromNoDueDateCount() {
+        deletedTask(null,null);
+        assertThat(tasks.countByStatusAndDueDateIsNull(TaskStatus.TODO)).isZero();
+    }
+
+    // 과거 메시지를 다시 그릴 때는 삭제 행을 불러 tombstone으로 표시할 수 있다.
+    @Test void deletedTaskRemainsAvailableForHistoricalMessageRendering() {
+        Long id = deletedTask(null,TODAY);
+        assertThat(tasks.findAllWithAssigneeByIdIn(List.of(id))).extracting(Task::getId).containsExactly(id);
+    }
+
+    // Task 변경과 이력이 같은 PostgreSQL 트랜잭션에서 저장되어 별도 조회로도 읽힌다.
+    @Test void taskEditsAndAuditEventRoundTripTogether() {
+        Long id = tasks.saveAndFlush(Task.create("수정 전 제목",null,TODAY)).getId();
+        taskService.edit(id,"수정 후 제목",false,null,"UACTOR");
+        assertThat(jdbc.queryForMap("SELECT type,before_value,after_value,by_slack_user_id FROM task_events WHERE task_id=?",id))
+                .containsEntry("type","TITLE_CHANGED").containsEntry("before_value","수정 전 제목")
+                .containsEntry("after_value","수정 후 제목").containsEntry("by_slack_user_id","UACTOR");
+        assertThat(tasks.findById(id).orElseThrow().getTitle()).isEqualTo("수정 후 제목");
+    }
+
+    // 과거 Task INSERT 형식에도 soft delete 기본값 false가 적용된다.
+    @Test void deletedDefaultsToFalseForLegacyTaskInsert() {
+        jdbc.update("INSERT INTO tasks(title,status,created_at) VALUES ('이전 형식','TODO',now())");
+        assertThat(jdbc.queryForObject("SELECT deleted FROM tasks",Boolean.class)).isFalse();
+    }
+
+    // 거절된 제목 변경은 Task와 변경 이력을 모두 그대로 둔다.
+    @Test void rejectedDuplicateEditDoesNotPersistTaskOrAuditEvent() {
+        tasks.saveAndFlush(Task.create("중복 제목",null,TODAY));
+        Long id=tasks.saveAndFlush(Task.create("원래 제목",null,TODAY)).getId();
+        assertThatThrownBy(() -> taskService.edit(id,"중복 제목",false,null,"UACTOR"))
+                .isInstanceOf(com.meetodo.task.exception.DuplicateTaskException.class);
+        assertThat(tasks.findById(id).orElseThrow().getTitle()).isEqualTo("원래 제목");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM task_events",Long.class)).isZero();
+    }
+
+    // 존재하지 않는 Task에 대한 변경 이력은 외래 키에서 거절한다.
+    @Test void auditEventCannotReferenceMissingTask() {
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO task_events(task_id,type,at) VALUES (999,'DELETED',now())"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    private Long deletedTask(com.meetodo.member.Member member, LocalDate date) {
+        Long id = tasks.saveAndFlush(Task.create("삭제한 업무",member,date)).getId();
+        jdbc.update("UPDATE tasks SET deleted=true WHERE id=?",id);
+        return id;
     }
 
     // 검증: 다시 시작해도 적용된 V1은 재실행하지 않는다.

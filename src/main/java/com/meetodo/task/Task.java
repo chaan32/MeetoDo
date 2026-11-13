@@ -73,6 +73,14 @@ public class Task {
     public String getAssignedBySlackUserId() { return assignedBySlackUserId; }
     public Instant getAssignedAt() { return assignedAt; }
 
+    @Column(nullable = false)
+    @org.hibernate.annotations.ColumnDefault("false")
+    private boolean deleted;
+
+    public boolean isDeleted() { return deleted; }
+    public void softDelete() { deleted = true; }
+    public void edit(String title, LocalDate dueDate) { this.title = title; this.dueDate = dueDate; }
+
     protected Task() {
     }
 

@@ -65,7 +65,10 @@ public class SlackBotConfiguration {
             @Qualifier("slackMeetingExecutor") ThreadPoolTaskExecutor executor, Clock clock) {
         return new SlackMeetingInputService(client, meetings, bot, executor, clock);
     }
-    @Bean App slackBoltApp(Environment env, SlackBotService service, ObjectProvider<SlackMeetingInputService> inputs) {
+    @Bean SlackTaskEditService slackTaskEditService(MethodsClient client, SlackBotService bot, TaskService tasks, Clock clock) {
+        return new SlackTaskEditService(client, bot, tasks, clock);
+    }
+    @Bean App slackBoltApp(Environment env, SlackBotService service, ObjectProvider<SlackMeetingInputService> inputs, SlackTaskEditService edits) {
         App app = new App(AppConfig.builder().singleTeamBotToken(env.getProperty("SLACK_BOT_TOKEN")).build());
         app.blockAction(SlackBotRenderer.COMPLETE_ACTION, (request, context) -> {
             var ack = context.ack();
@@ -100,6 +103,7 @@ public class SlackBotConfiguration {
             }
             return ack;
         });
+        edits.register(app);
         SlackMeetingInputService input = inputs.getIfAvailable();
         if (input != null) input.register(app);
         return app;

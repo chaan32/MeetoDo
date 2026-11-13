@@ -16,19 +16,24 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     @Query("select task from Task task where task.id = :id")
     Optional<Task> findByIdForUpdate(@Param("id") Long id);
 
-    @Query("select task from Task task left join fetch task.assignee where task.status = :status and task.dueDate <= :lastDate")
+    @Query("select task from Task task left join fetch task.assignee where task.deleted = false and task.status = :status and task.dueDate <= :lastDate")
     List<Task> findDigestTasks(@Param("status") TaskStatus status, @Param("lastDate") LocalDate lastDate);
-    long countByStatusAndDueDateIsNull(TaskStatus status);
+    @Query("select count(task) from Task task where task.deleted = false and task.status = :status and task.dueDate is null")
+    long countByStatusAndDueDateIsNull(@Param("status") TaskStatus status);
 
+    @Query("select task from Task task left join fetch task.assignee where task.deleted = false order by task.createdAt desc")
     List<Task> findAllByOrderByCreatedAtDesc();
-    List<Task> findAllByAssigneeOrderByCreatedAtDesc(Member assignee);
+    @Query("select task from Task task left join fetch task.assignee where task.deleted = false and task.assignee = :assignee order by task.createdAt desc")
+    List<Task> findAllByAssigneeOrderByCreatedAtDesc(@Param("assignee") Member assignee);
+    @Query("select task from Task task where task.deleted = false and task.assignee is null order by task.createdAt desc")
     List<Task> findAllByAssigneeIsNullOrderByCreatedAtDesc();
-    @Query("select task from Task task left join fetch task.assignee where task.assignee = :assignee and task.status = :status order by task.createdAt desc")
+    @Query("select task from Task task left join fetch task.assignee where task.deleted = false and task.assignee = :assignee and task.status = :status order by task.createdAt desc")
     List<Task> findAllByAssigneeAndStatusOrderByCreatedAtDesc(@Param("assignee") Member assignee,
                                                                @Param("status") TaskStatus status);
-    @Query("select task from Task task left join fetch task.assignee where task.assignee is null and task.status = :status order by task.createdAt desc")
+    @Query("select task from Task task left join fetch task.assignee where task.deleted = false and task.assignee is null and task.status = :status order by task.createdAt desc")
     List<Task> findAllByAssigneeIsNullAndStatusOrderByCreatedAtDesc(@Param("status") TaskStatus status);
-    List<Task> findAllByMeeting_IdAndTitleIgnoreCase(Long meetingId, String title);
+    @Query("select task from Task task where task.deleted = false and task.meeting.id = :meetingId and lower(task.title) = lower(:title)")
+    List<Task> findAllByMeeting_IdAndTitleIgnoreCase(@Param("meetingId") Long meetingId, @Param("title") String title);
     @Query("select task from Task task left join fetch task.assignee where task.meeting.id = :meetingId order by task.createdAt desc")
     List<Task> findAllByMeeting_IdOrderByCreatedAtDesc(@Param("meetingId") Long meetingId);
 

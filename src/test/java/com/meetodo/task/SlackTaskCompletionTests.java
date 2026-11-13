@@ -5,7 +5,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.meetodo.member.Member;
 import com.meetodo.member.MemberRepository;
 import com.meetodo.meeting.dto.MeetingTaskResponse;
-import com.meetodo.task.dto.UpdateTaskStatusRequest;
+import com.meetodo.task.dto.UpdateTaskRequest;
 import com.meetodo.task.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.Test;
 import java.time.*;
@@ -29,11 +29,13 @@ class SlackTaskCompletionTests {
     // PATCH 완료 시각이 응답에 포함되고 주입한 Clock을 사용한다.
     @Test void patchRecordsCompletionTime() {
         task(null);
-        var response = service.updateStatus(1L, new UpdateTaskStatusRequest(TaskStatus.DONE));
+        var request = new UpdateTaskRequest();
+        request.setStatus(TaskStatus.DONE);
+        var response = service.update(1L, request, "U123ABC");
         var json = new ObjectMapper().registerModule(new JavaTimeModule()).valueToTree(response);
         assertThat(json.hasNonNull("completedAt")).isTrue();
         assertThat(response.completedAt()).isEqualTo(NOW);
-        assertThat(response.completedBySlackUserId()).isNull();
+        assertThat(response.completedBySlackUserId()).isEqualTo("U123ABC");
     }
 
     // 담당자는 자신의 할 일을 완료할 수 있다.
@@ -122,7 +124,9 @@ class SlackTaskCompletionTests {
     @Test void reopeningClearsCompletionMetadata() {
         var task = task(null);
         task.changeStatus(TaskStatus.DONE, "U123ABC", Instant.EPOCH);
-        var response = service.updateStatus(1L, new UpdateTaskStatusRequest(TaskStatus.TODO));
+        var request = new UpdateTaskRequest();
+        request.setStatus(TaskStatus.TODO);
+        var response = service.update(1L, request, "U123ABC");
         assertThat(response.status()).isEqualTo(TaskStatus.TODO);
         assertThat(response.completedAt()).isNull();
         assertThat(response.completedBySlackUserId()).isNull();
@@ -132,7 +136,9 @@ class SlackTaskCompletionTests {
     @Test void repeatedPatchPreservesCompletionMetadata() {
         var task = task(null);
         task.changeStatus(TaskStatus.DONE, "U123ABC", Instant.EPOCH);
-        var response = service.updateStatus(1L, new UpdateTaskStatusRequest(TaskStatus.DONE));
+        var request = new UpdateTaskRequest();
+        request.setStatus(TaskStatus.DONE);
+        var response = service.update(1L, request, "U123ABC");
         assertThat(response.completedAt()).isEqualTo(Instant.EPOCH);
         assertThat(response.completedBySlackUserId()).isEqualTo("U123ABC");
     }

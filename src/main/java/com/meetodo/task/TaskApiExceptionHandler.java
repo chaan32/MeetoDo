@@ -63,6 +63,11 @@ public class TaskApiExceptionHandler {
         return null;
     }
 
+    @ExceptionHandler(TaskMutationException.class)
+    ResponseEntity<ApiError> mutation(TaskMutationException exception) {
+        return ResponseEntity.status(exception.getStatus()).body(new ApiError(exception.getCode(), exception.getMessage(), Map.of()));
+    }
+
     @ExceptionHandler(TaskAssignmentException.class)
     ResponseEntity<ApiError> assignment(TaskAssignmentException exception) {
         return ResponseEntity.badRequest().body(new ApiError(exception.getCode(), exception.getMessage(), Map.of()));

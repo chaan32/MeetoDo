@@ -10,7 +10,14 @@ public record TaskResponse(Long id, String title, MemberResponse assignee,
                            LocalDate dueDate, TaskStatus status, Long meetingId, Instant createdAt,
                            long mentionCount, UnresolvedAssignee unresolvedAssignee, String warning, String unassignedReason,
                            String completedBySlackUserId, Instant completedAt,
-                           String assignedBySlackUserId, Instant assignedAt) {
+                           String assignedBySlackUserId, Instant assignedAt, boolean deleted) {
+    public TaskResponse(Long id, String title, MemberResponse assignee, LocalDate dueDate, TaskStatus status,
+                        Long meetingId, Instant createdAt, long mentionCount, UnresolvedAssignee unresolvedAssignee,
+                        String warning, String unassignedReason, String completedBySlackUserId, Instant completedAt,
+                        String assignedBySlackUserId, Instant assignedAt) {
+        this(id, title, assignee, dueDate, status, meetingId, createdAt, mentionCount, unresolvedAssignee,
+                warning, unassignedReason, completedBySlackUserId, completedAt, assignedBySlackUserId, assignedAt, false);
+    }
     public TaskResponse(Long id, String title, MemberResponse assignee, LocalDate dueDate, TaskStatus status,
                         Long meetingId, Instant createdAt, long mentionCount, UnresolvedAssignee unresolvedAssignee,
                         String warning, String unassignedReason, String completedBySlackUserId, Instant completedAt) {
@@ -36,6 +43,6 @@ public record TaskResponse(Long id, String title, MemberResponse assignee,
         return new TaskResponse(task.getId(), task.getTitle(), member, task.getDueDate(),
                 task.getStatus(), task.getMeetingId(), task.getCreatedAt(), mentionCount, detail,
                 detail == null ? null : detail.warning(), detail == null ? null : detail.reason(),
-                task.getCompletedBySlackUserId(), task.getCompletedAt(), task.getAssignedBySlackUserId(), task.getAssignedAt());
+                task.getCompletedBySlackUserId(), task.getCompletedAt(), task.getAssignedBySlackUserId(), task.getAssignedAt(), task.isDeleted());
     }
 }

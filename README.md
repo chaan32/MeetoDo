@@ -411,3 +411,15 @@ Swagger: `PATCH /api/tasks/{id}/assignee`, 본문 `{"assigneeId":4}`, 헤더 `X-
 추가 OAuth 권한은 없다. 기존 chat:write, im:write와 Interactivity를 사용한다. [사용자/정적 선택 메뉴](https://docs.slack.dev/reference/block-kit/block-elements/select-menu-element/), [block_actions의 selected_user/selected_option](https://docs.slack.dev/reference/interaction-payloads/block_actions-payload/), [chat.update](https://docs.slack.dev/reference/methods/chat.update/)에 맞춰 구현하며 실제 채널 확인은 사용자가 수행한다.
 
 단계2 최종 검증: `./gradlew test bootJar --no-daemon` 성공, **553개 / 실패·오류·건너뜀0**. API·후보/사용자 선택·멱등 지정·모든 메시지 갱신·지정 DM·PostgreSQL 동시 지정/마이그레이션을 포함한다. 실제 Slack·OpenAI 호출은 하지 않았다.
+
+## 할 일 수정·완료 취소·삭제 — 단계3
+
+Slack의 할 일 `⋯`에서 제목·마감일 모달, 완료 취소, 삭제 확인 모달을 연다. 담당자 본인 또는 관리자만 변경하고 미정은 누구나 변경한다. DB의 현재 권한을 모달 열기·제출 때 재검증한다. 제목은 기존 명사형 검증, 과거 마감일 변경은 거절한다. 제목 변경/완료 취소로 TODO 중복이 생기면409와 기존 번호를 반환한다. 삭제는 soft delete이며 목록·다이제스트·중복 후보에서는 제외하고 과거 메시지에는 `🗑 삭제됨`을 표시한다. TaskMention·ToolCallLog·변경 이력은 보존한다.
+
+API: `PATCH /api/tasks/{id}`는 `{"title":"배포 체크리스트 정리"}`, `{"dueDate":"2026-11-20"}`, `{"dueDate":null}`, `{"status":"DONE"}`을 받는다. 생략한 필드는 유지하고 명시한 null 마감일은 지운다. `POST /api/tasks/{id}/reopen`, `DELETE /api/tasks/{id}`도 같은 서비스·권한을 사용한다. 수정 요청에는 `X-Slack-User-Id` 헤더를 넣는다. 기존 status PATCH의 본문은 유지하지만 호출자 헤더가 필요해졌다. 이 헤더는 인증 전 로컬 선언값으로 외부 공개용 인증이 아니다.
+
+TaskEvent에는 변경 유형, 이전/이후 값, 변경자, 시각을 Task 변경과 같은 트랜잭션에 기록한다. 커밋 후 관련 채널·DM을 DB로 다시 그리고 갱신 실패는 Task 변경을 되돌리지 않는다. 모달은 서버가 보관한 view ID·사용자·원본 메시지와 연결하고30분 뒤 만료한다. Socket Mode는 먼저 ACK하고, 모달 열기는 trigger_id 만료 전에 처리한다. 추가 OAuth 권한·재설치는 필요 없다([overflow](https://docs.slack.dev/reference/block-kit/block-elements/overflow-menu-element/), [datepicker](https://docs.slack.dev/reference/block-kit/block-elements/date-picker-element/), [views.open](https://docs.slack.dev/reference/methods/views.open/)).
+
+V6는 deleted=false 기본값과 task_events를 추가한다. local H2도 시작 SQL로 기존 행에 기본값을 적용하므로 정상 개발 DB의 초기화는 필요하지 않다. 데이터 삭제는 자동 수행하지 않는다.
+
+3단계 최종 전체 검증: `./gradlew test bootJar --no-daemon` 성공, **662개 / 실패·오류·건너뜀0**. PostgreSQL V6·TaskEvent·삭제 필터, H2 기존 행 보존, API37개 수정 시나리오, Slack 모달·메시지·ACK·커밋/롤백 회귀를 포함한다. 실제 Slack/OpenAI는 호출하지 않았다.

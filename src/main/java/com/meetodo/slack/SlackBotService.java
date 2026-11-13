@@ -165,18 +165,20 @@ public class SlackBotService {
     public void complete(String channelId, String messageTs, String actor, String value) {
         if (channelId == null || messageTs == null || SlackBotRenderer.mention(actor).isEmpty()) return;
         SlackMessageReference reference;
+        boolean alreadyDone;
         long taskId;
         try {
             taskId = Long.parseLong(value);
             reference = references.findByChannelIdAndMessageTs(channelId, messageTs).orElseThrow();
             if (reference.getDeliveryStatus() != SlackMessageReference.DeliveryStatus.SENT || !ids(reference).contains(taskId)) throw new IllegalArgumentException();
+            alreadyDone = tasks.findAllWithAssigneeByIdIn(List.of(taskId)).stream().anyMatch(task -> task.getStatus() == TaskStatus.DONE);
             taskService.completeFromSlack(taskId, actor);
         } catch (TaskCompletionForbiddenException exception) {
             ephemeral(channelId, actor, "담당자만 완료할 수 있어요"); return;
         } catch (Exception exception) {
             ephemeral(channelId, actor, "등록된 메시지와 할 일을 확인할 수 없어요."); return;
         }
-        refreshTask(taskId, reference);
+        if (alreadyDone) refreshTask(taskId, reference);
     }
 
     public void refreshTask(Long taskId) { refreshTask(taskId, null); }
@@ -253,6 +255,10 @@ public class SlackBotService {
         return noChange;
     }
 
+    void authorizeTaskMessage(String channelId, String messageTs, String actor, long taskId) throws java.io.IOException {
+        authorize(channelId, messageTs, actor, taskId);
+    }
+
     private void authorize(String channelId, String messageTs, String actor, long taskId) throws java.io.IOException {
         if (channelId == null || messageTs == null || SlackBotRenderer.mention(actor).isEmpty()) throw new IllegalArgumentException();
         var reference = references.findByChannelIdAndMessageTs(channelId, messageTs).orElseThrow();
@@ -323,7 +329,8 @@ public class SlackBotService {
                 NotificationMessage.Type.DAILY_DIGEST, date);
     }
 
-    private void ephemeral(String channelId, String user, String text) {
+    void ephemeral(String channelId, String user, String text) {
+        if (channelId == null || !channelId.matches("[CDG][A-Z0-9]{1,79}") || SlackBotRenderer.mention(user).isEmpty()) return;
         try { client.chatPostEphemeral(ChatPostEphemeralRequest.builder().channel(channelId).user(user).text(text).build()); }
         catch (Exception ignored) { }
     }

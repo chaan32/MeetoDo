@@ -110,7 +110,7 @@ class SlackDirectMessageTests {
     @Test void completionFromDmRefreshesChannelAndDm() throws Exception {
         // DM에서 완료해도 채널과 관련 DM을 모두 현재 DB 상태로 다시 그린다.
         enable(); Task task=add(7,"UHAECHAN","CREATED"); bot.send(message);
-        when(taskService.completeFromSlack(7L,"UHAECHAN")).thenAnswer(call -> { task.changeStatus(TaskStatus.DONE,"UHAECHAN",Instant.EPOCH); return null; });
+        when(taskService.completeFromSlack(7L,"UHAECHAN")).thenAnswer(call -> { task.changeStatus(TaskStatus.DONE,"UHAECHAN",Instant.EPOCH); bot.refreshTask(7L); return null; });
         bot.complete("DUHAECHAN","2.1","UHAECHAN","7");
         var updates=ArgumentCaptor.forClass(ChatUpdateRequest.class); verify(client,times(2)).chatUpdate(updates.capture());
         assertThat(updates.getAllValues()).extracting(ChatUpdateRequest::getChannel).containsExactlyInAnyOrder("C1","DUHAECHAN");
@@ -119,7 +119,7 @@ class SlackDirectMessageTests {
     @Test void completionFromChannelRefreshesDm() throws Exception {
         // 채널에서 완료할 때에도 같은 업무가 포함된 DM의 버튼을 제거한다.
         enable(); Task task=add(7,"UHAECHAN","CREATED"); bot.send(message);
-        when(taskService.completeFromSlack(7L,"UHAECHAN")).thenAnswer(call -> { task.changeStatus(TaskStatus.DONE,"UHAECHAN",Instant.EPOCH); return null; });
+        when(taskService.completeFromSlack(7L,"UHAECHAN")).thenAnswer(call -> { task.changeStatus(TaskStatus.DONE,"UHAECHAN",Instant.EPOCH); bot.refreshTask(7L); return null; });
         bot.complete("C1","1.2","UHAECHAN","7");
         var updates=ArgumentCaptor.forClass(ChatUpdateRequest.class); verify(client,times(2)).chatUpdate(updates.capture());
         assertThat(updates.getAllValues()).extracting(ChatUpdateRequest::getChannel).contains("DUHAECHAN");
@@ -136,7 +136,7 @@ class SlackDirectMessageTests {
     @Test void failedRefreshDoesNotStopOtherMessageUpdates() throws Exception {
         // 한 좌표의 갱신 실패가 다른 좌표 갱신이나 이미 저장된 완료를 중단하지 않는다.
         enable(); Task task=add(7,"UHAECHAN","CREATED"); bot.send(message);
-        when(taskService.completeFromSlack(7L,"UHAECHAN")).thenAnswer(call -> { task.changeStatus(TaskStatus.DONE,"UHAECHAN",Instant.EPOCH); return null; });
+        when(taskService.completeFromSlack(7L,"UHAECHAN")).thenAnswer(call -> { task.changeStatus(TaskStatus.DONE,"UHAECHAN",Instant.EPOCH); bot.refreshTask(7L); return null; });
         when(client.chatUpdate(any(ChatUpdateRequest.class))).thenThrow(new java.io.IOException(String.join("", "xox", "b-secret")));
         bot.complete("C1","1.2","UHAECHAN","7");
         assertThat(task.getStatus()).isEqualTo(TaskStatus.DONE); verify(client,times(2)).chatUpdate(any(ChatUpdateRequest.class));
@@ -216,10 +216,37 @@ class SlackDirectMessageTests {
     @Test void completionRefreshesAssignmentDmWithoutMeeting() throws Exception {
         // 직접 배정 DM에서도 완료 시 회의 조회나 날짜 알림으로 바꾸지 않고 현재 업무를 표시한다.
         enable(); Task task = add(7, "UHAECHAN", "EXISTING"); bot.assigned(7L, "UACTOR");
-        when(taskService.completeFromSlack(7L, "UHAECHAN")).thenAnswer(call -> { task.changeStatus(TaskStatus.DONE, "UHAECHAN", Instant.EPOCH); return null; });
+        when(taskService.completeFromSlack(7L, "UHAECHAN")).thenAnswer(call -> { task.changeStatus(TaskStatus.DONE, "UHAECHAN", Instant.EPOCH); bot.refreshTask(7L); return null; });
         bot.complete("DUHAECHAN", "2.1", "UHAECHAN", "7");
         var request = ArgumentCaptor.forClass(ChatUpdateRequest.class); verify(client).chatUpdate(request.capture());
         assertThat(request.getValue().getText()).contains("완료 (<@UHAECHAN>)").doesNotContain("meetodo_assign_");
+    }
+
+    @Test void taskEditRefreshesEveryRelatedMessageFromCurrentDatabaseValues() throws Exception {
+        // 재조회 객체의 제목·기한을 모든 관련 채널과 DM에 반영하고 다른 업무 메시지는 건드리지 않는다.
+        enable(); add(7, "UHAECHAN", "CREATED"); bot.send(message);
+        stored.add(new SlackMessageReference("C2", "3.1", meeting, null, "[7]"));
+        stored.add(new SlackMessageReference("COTHER", "4.1", meeting, null, "[8]"));
+        current.clear(); Task reloaded = add(7, "UHAECHAN", "CREATED");
+        reloaded.edit("DB에서 바뀐 제목", LocalDate.of(2026, 12, 1));
+        clearInvocations(tasks);
+        bot.refreshTask(7L);
+        var updates = ArgumentCaptor.forClass(ChatUpdateRequest.class); verify(client, times(3)).chatUpdate(updates.capture());
+        assertThat(updates.getAllValues()).extracting(ChatUpdateRequest::getChannel).containsExactlyInAnyOrder("C1", "C2", "DUHAECHAN");
+        assertThat(updates.getAllValues()).allSatisfy(update -> assertThat(update.getText()).contains("DB에서 바뀐 제목", "2026-12-01").doesNotContain("할 일 7"));
+        verify(tasks, times(3)).findAllWithAssigneeByIdIn(List.of(7L));
+    }
+
+    @Test void taskDeletionRefreshesChannelAndDmAsNonInteractiveTombstone() throws Exception {
+        // 삭제도 저장된 채널·DM 좌표를 유지하고 DB의 삭제 표시로 모든 동작을 제거한다.
+        enable(); Task task = add(7, "UHAECHAN", "CREATED"); bot.send(message); task.softDelete();
+        bot.refreshTask(7L);
+        var updates = ArgumentCaptor.forClass(ChatUpdateRequest.class); verify(client, times(2)).chatUpdate(updates.capture());
+        assertThat(updates.getAllValues()).allSatisfy(update -> {
+            assertThat(update.getText()).contains("🗑 삭제됨 · 할 일 7");
+            assertThat(update.getBlocksAsString()).doesNotContain(SlackBotRenderer.TASK_MENU_ACTION,
+                    SlackBotRenderer.COMPLETE_ACTION, "meetodo_assign_");
+        });
     }
 
 }

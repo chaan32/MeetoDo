@@ -11,7 +11,7 @@ spring:
   sql:
     init:
       mode: always
-      schema-locations: classpath:db/local/slack-message-dm-upgrade.sql,classpath:db/local/member-management-upgrade.sql
+      schema-locations: classpath:db/local/slack-message-dm-upgrade.sql,classpath:db/local/member-management-upgrade.sql,classpath:db/local/task-management-upgrade.sql
   jpa:
     hibernate:
       ddl-auto: update

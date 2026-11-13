@@ -32,10 +32,14 @@ class TaskApiTests {
     @BeforeEach
     void resetDatabase() {
         mentionRepository.deleteAll();
+        jdbc.update("delete from task_events");
         jdbc.update("delete from tasks");
         memberRepository.deleteAll();
         memberRepository.save(new Member("김", "민수", "미지정", "U-MINSU"));
     }
+
+    @org.junit.jupiter.api.AfterEach
+    void clearAuditEvents() { jdbc.update("delete from task_events"); }
 
     // 검증: createsAndReturnsTaskWithMemberAndUnassignedTask 시나리오의 기대 동작을 확인한다.
     @Test
@@ -74,7 +78,7 @@ class TaskApiTests {
         long id = com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
                 .readTree(body).get("id").asLong();
 
-        mvc.perform(patch("/api/tasks/{id}", id).contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(patch("/api/tasks/{id}", id).header("X-Slack-User-Id", "UACTOR1").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"status\":\"DONE\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("DONE"));
@@ -98,7 +102,7 @@ class TaskApiTests {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("MEMBER_NOT_FOUND"));
 
-        mvc.perform(patch("/api/tasks/98765").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(patch("/api/tasks/98765").header("X-Slack-User-Id", "UACTOR1").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"status\":\"DONE\"}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("TASK_NOT_FOUND"));
@@ -130,7 +134,7 @@ class TaskApiTests {
                 .andExpect(jsonPath("$.code").value("DUPLICATE_TASK"))
                 .andExpect(jsonPath("$.existingTaskId").value(existingId));
 
-        mvc.perform(patch("/api/tasks/{id}", existingId).contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(patch("/api/tasks/{id}", existingId).header("X-Slack-User-Id", "UACTOR1").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"status\":\"DONE\"}"))
                 .andExpect(status().isOk());
         mvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON)
@@ -210,7 +214,7 @@ class TaskApiTests {
                         .content("{\"title\":\"배포 로그 정리\"}"))
                 .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
         long id=com.fasterxml.jackson.databind.json.JsonMapper.builder().build().readTree(first).get("id").asLong();
-        mvc.perform(patch("/api/tasks/{id}",id).contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"DONE\"}"))
+        mvc.perform(patch("/api/tasks/{id}",id).header("X-Slack-User-Id", "UACTOR1").contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"DONE\"}"))
                 .andExpect(status().isOk());
         mvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"배포 로그 정리.\"}"))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.title").value("배포 로그 정리"));

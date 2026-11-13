@@ -4,7 +4,6 @@ import java.util.List;
 
 import com.meetodo.task.dto.CreateTaskRequest;
 import com.meetodo.task.dto.TaskResponse;
-import com.meetodo.task.dto.UpdateTaskStatusRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -47,8 +46,21 @@ public class TaskController {
     }
 
     @PatchMapping("/{id}")
-    public TaskResponse updateStatus(@PathVariable Long id,
-                                     @Valid @RequestBody UpdateTaskStatusRequest request) {
-        return taskService.updateStatus(id, request);
+    public TaskResponse update(@PathVariable Long id,
+                              @Valid @RequestBody com.meetodo.task.dto.UpdateTaskRequest request,
+                              @org.springframework.web.bind.annotation.RequestHeader(value = "X-Slack-User-Id", required = false) String actor) {
+        return taskService.update(id, request, actor);
+    }
+
+    @PostMapping("/{id}/reopen")
+    public TaskResponse reopen(@PathVariable Long id,
+                              @org.springframework.web.bind.annotation.RequestHeader(value = "X-Slack-User-Id", required = false) String actor) {
+        return taskService.reopen(id, actor);
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/{id}")
+    public TaskResponse delete(@PathVariable Long id,
+                              @org.springframework.web.bind.annotation.RequestHeader(value = "X-Slack-User-Id", required = false) String actor) {
+        return taskService.delete(id, actor);
     }
 }

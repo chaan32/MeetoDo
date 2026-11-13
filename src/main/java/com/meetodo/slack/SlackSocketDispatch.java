@@ -27,8 +27,18 @@ final class SlackSocketDispatch {
                 catch (Exception exception) { log.warn("Slack action processing failed"); }
             };
             // Slash trigger IDs expire in three seconds; never wait behind completion HTTP calls.
-            if ("slash_commands".equals(request.getEnvelope().getType())) work.run();
+            if ("slash_commands".equals(request.getEnvelope().getType()) || opensModal(request.getBoltRequest())) work.run();
             else executor.execute(work);
         } catch (Exception exception) { log.warn("Slack socket event could not be handled"); }
     }
+    private boolean opensModal(com.slack.api.bolt.request.Request<?> request) {
+        if (!(request instanceof com.slack.api.bolt.request.builtin.BlockActionRequest action)) return false;
+        var actions = action.getPayload().getActions();
+        if (actions == null || actions.isEmpty()) return false;
+        var first = actions.getFirst();
+        if (!SlackBotRenderer.TASK_MENU_ACTION.equals(first.getActionId()) || first.getSelectedOption() == null) return false;
+        String value = first.getSelectedOption().getValue();
+        return value != null && (value.startsWith("title:") || value.startsWith("due:") || value.startsWith("delete:"));
+    }
+
 }

@@ -40,6 +40,7 @@ class SlackBotServiceTests {
         ReflectionTestUtils.setField(task, "id", 7L);
         when(refs.findByChannelIdAndMessageTs("C1", "1.2")).thenReturn(Optional.of(new SlackMessageReference("C1", "1.2", null, date, "[7]")));
         when(tasks.findAllWithAssigneeByIdIn(List.of(7L))).thenReturn(List.of(task));
+        when(refs.findAll()).thenReturn(List.of(new SlackMessageReference("C1", "1.2", null, date, "[7]")));
         when(tasks.findDigestTasks(TaskStatus.TODO, date.plusDays(3))).thenReturn(List.of(task));
     }
     @Test void postUsesConfiguredChannelAndDisablesAutomaticParsing() throws Exception {
@@ -106,7 +107,7 @@ class SlackBotServiceTests {
     @Test void completionRebuildsFromCurrentDatabaseTask() throws Exception {
         // 완료 뒤 DB에서 읽은 상태와 actor로 원래 메시지를 갱신한다.
         when(service.completeFromSlack(7L, "UACTOR")).thenAnswer(call -> {
-            task.changeStatus(TaskStatus.DONE, "UACTOR", java.time.Instant.EPOCH); return null;
+            task.changeStatus(TaskStatus.DONE, "UACTOR", java.time.Instant.EPOCH); bot.refreshTask(7L); return null;
         });
         var response = new ChatUpdateResponse(); response.setOk(true);
         when(client.chatUpdate(any(ChatUpdateRequest.class))).thenReturn(response);
@@ -119,7 +120,7 @@ class SlackBotServiceTests {
     @Test void failedUpdateDoesNotUndoCompletedTask(org.springframework.boot.test.system.CapturedOutput output) throws Exception {
         // Slack 갱신 실패 후에도 완료는 유지하며 비밀값 없이 로그만 남긴다.
         when(service.completeFromSlack(7L, "UACTOR")).thenAnswer(call -> {
-            task.changeStatus(TaskStatus.DONE, "UACTOR", java.time.Instant.EPOCH); return null;
+            task.changeStatus(TaskStatus.DONE, "UACTOR", java.time.Instant.EPOCH); bot.refreshTask(7L); return null;
         });
         when(client.chatUpdate(any(ChatUpdateRequest.class))).thenThrow(new java.io.IOException("secret provider body"));
         bot.complete("C1", "1.2", "UACTOR", "7");

@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 public class SlackBotRenderer {
+    public static final String TASK_MENU_ACTION = "meetodo_task_menu";
     public static final String COMPLETE_ACTION = "meetodo_complete_task";
     public static final String ASSIGN_CANDIDATE_ACTION = "meetodo_assign_candidate";
     public static final String ASSIGN_SELECT_ACTION = "meetodo_assign_select";
@@ -73,9 +74,9 @@ public class SlackBotRenderer {
         heading.forEach(value -> blocks.add(section(value, null)));
         for (int i = 0; i < shown; i++) {
             Task task = ordered.get(i);
-            blocks.add(section(lines.get(i), task.getStatus() == TaskStatus.TODO ? task.getId() : null));
-            Map<String, Object> assignment = assignment(task);
-            if (assignment != null) blocks.add(assignment);
+            blocks.add(taskSection(lines.get(i), task));
+            Map<String, Object> actions = taskActions(task);
+            if (actions != null) blocks.add(actions);
             text.add(lines.get(i));
         }
         if (shown < lines.size()) {
@@ -87,7 +88,7 @@ public class SlackBotRenderer {
     }
 
     private boolean fits(List<String> heading, List<String> lines, String omitted, String footer, List<Task> tasks) {
-        if (heading.size() + lines.size() + tasks.stream().filter(t -> assignment(t) != null).count() + 1 + (omitted.isEmpty() ? 0 : 1) > 50
+        if (heading.size() + lines.size() + tasks.stream().filter(t -> taskActions(t) != null).count() + 1 + (omitted.isEmpty() ? 0 : 1) > 50
                 || lines.stream().anyMatch(line -> line.length() > 3000)) return false;
         List<String> text = new ArrayList<>(heading); text.addAll(lines);
         if (!omitted.isEmpty()) text.add(omitted);
@@ -96,6 +97,7 @@ public class SlackBotRenderer {
     }
 
     private String line(NotificationMessage message, Task task, MeetingTaskResponse detail) {
+        if (task.isDeleted()) return "🗑 삭제됨 · " + escape(task.getTitle());
         String owner = task.getAssignee() == null ? "담당자 미정" : mention(task.getAssignee().getSlackUserId());
         if (owner.isEmpty()) owner = escape(task.getAssignee().getFullName() + "(" + task.getAssignee().getTeam() + ")");
         String state = task.getStatus() == TaskStatus.DONE ? "✅ 완료" : "⬜ 미완료";
@@ -116,7 +118,7 @@ public class SlackBotRenderer {
     }
 
     private Map<String, Object> assignment(Task task) {
-        if (task.getStatus() != TaskStatus.TODO || task.getAssignee() != null) return null;
+        if (task.isDeleted() || task.getStatus() != TaskStatus.TODO || task.getAssignee() != null) return null;
         var snapshot = task.getUnresolvedAssignee();
         var candidates = snapshot == null ? List.<com.meetodo.task.UnresolvedAssignee.Candidate>of() : snapshot.candidates();
         List<Map<String, Object>> elements = new ArrayList<>();
@@ -133,6 +135,35 @@ public class SlackBotRenderer {
         } else elements.add(Map.of("type", "users_select", "action_id", ASSIGN_USER_ACTION,
                 "placeholder", Map.of("type", "plain_text", "text", "담당자 지정")));
         return Map.of("type", "actions", "block_id", ASSIGN_BLOCK_PREFIX + task.getId(), "elements", elements);
+    }
+
+    private Map<String, Object> taskActions(Task task) {
+        if (task.isDeleted() || task.getStatus() != TaskStatus.TODO) return null;
+        List<Map<String, Object>> elements = new ArrayList<>();
+        elements.add(Map.of("type", "button", "text", Map.of("type", "plain_text", "text", "✅ 완료"),
+                "action_id", COMPLETE_ACTION, "value", task.getId().toString()));
+        var assignment = assignment(task);
+        if (assignment != null) {
+            @SuppressWarnings("unchecked") var choices = (List<Map<String, Object>>) assignment.get("elements");
+            elements.addAll(choices);
+        }
+        return Map.of("type", "actions", "block_id", ASSIGN_BLOCK_PREFIX + task.getId(), "elements", elements);
+    }
+
+    private Map<String, Object> taskSection(String text, Task task) {
+        var block = section(text, null);
+        if (task.isDeleted()) return block;
+        List<Map<String, Object>> options = new ArrayList<>();
+        options.add(menuOption("제목 수정", "title", task.getId()));
+        options.add(menuOption("마감일 수정", "due", task.getId()));
+        if (task.getStatus() == TaskStatus.DONE) options.add(menuOption("다시 열기", "reopen", task.getId()));
+        options.add(menuOption("삭제", "delete", task.getId()));
+        block.put("accessory", Map.of("type", "overflow", "action_id", TASK_MENU_ACTION, "options", options));
+        return block;
+    }
+
+    private Map<String, Object> menuOption(String label, String operation, Long taskId) {
+        return Map.of("text", Map.of("type", "plain_text", "text", label), "value", operation + ":" + taskId);
     }
 
     private Map<String, Object> section(String text, Long taskId) {
