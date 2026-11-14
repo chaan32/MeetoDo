@@ -11,11 +11,12 @@ public record UsageCall(int callOrder, String model, Long inputTokens, Long outp
     }
     public static UsageCall raw(int order, String model, Long input, Long output, Long total, BigDecimal seconds, String type) {
         return new UsageCall(order, model, input, output, total, seconds, type, null,
-                "tokens".equals(type) || "duration".equals(type) ? "PRICE_NOT_CONFIGURED" : "USAGE_UNAVAILABLE");
+                "tokens".equals(type) || "duration".equals(type) || "embedding".equals(type) ? "PRICE_NOT_CONFIGURED" : "USAGE_UNAVAILABLE");
     }
     public boolean available() {
         return "tokens".equals(usageType) && inputTokens != null && outputTokens != null && totalTokens != null
-                || "duration".equals(usageType) && durationSeconds != null;
+                || "duration".equals(usageType) && durationSeconds != null
+                || "embedding".equals(usageType) && inputTokens != null && totalTokens != null;
     }
     public boolean hasUsage() {
         return inputTokens != null || outputTokens != null || totalTokens != null || durationSeconds != null;

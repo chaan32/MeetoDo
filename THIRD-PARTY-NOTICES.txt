@@ -30,3 +30,5 @@ https://javaee.github.io/websocket-spec/
 https://www.eclipse.org/legal/epl-2.0/
 https://jdbc.postgresql.org/about/license/
 https://www.h2database.com/html/license.html
+
+RAG additions (2026-11-14): spring-ai-pgvector-store 1.1.8 POM declares Apache 2.0; its pgvector Java client dependency (com.pgvector:pgvector) POM declares MIT. The pgvector extension image retains upstream PostgreSQL/pgvector notices; no dependency is relicensed by this project. This is not a complete container/transitive-license audit.

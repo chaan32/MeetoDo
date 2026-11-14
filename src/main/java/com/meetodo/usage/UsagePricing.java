@@ -9,12 +9,14 @@ import org.springframework.stereotype.Component;
 public class UsagePricing {
     private final Rates chat;
     private final Rates stt;
+    private final Rates embedding;
     public UsagePricing(Environment environment) {
-        chat = rates(environment, "CHAT"); stt = rates(environment, "STT");
+        chat = rates(environment, "CHAT"); stt = rates(environment, "STT"); embedding = rates(environment, "EMBEDDING");
     }
     public UsageReport price(UsageReport report) {
         return new UsageReport(report.chatCalls().stream().map(call -> price(call, chat)).toList(),
-                report.transcription() == null ? null : price(report.transcription(), stt));
+                report.transcription() == null ? null : price(report.transcription(), stt),
+                report.embeddingCalls().stream().map(call -> price(call, embedding)).toList());
     }
     private UsageCall price(UsageCall call, Rates rates) {
         if (!call.available()) return call.priced(null, "USAGE_UNAVAILABLE");
@@ -23,6 +25,9 @@ public class UsagePricing {
         if ("tokens".equals(call.usageType()) && rates.input != null && rates.output != null)
             cost = BigDecimal.valueOf(call.inputTokens()).multiply(rates.input)
                     .add(BigDecimal.valueOf(call.outputTokens()).multiply(rates.output))
+                    .divide(BigDecimal.valueOf(1_000_000), 12, RoundingMode.HALF_UP);
+        if ("embedding".equals(call.usageType()) && rates.input != null)
+            cost = BigDecimal.valueOf(call.inputTokens()).multiply(rates.input)
                     .divide(BigDecimal.valueOf(1_000_000), 12, RoundingMode.HALF_UP);
         if ("duration".equals(call.usageType()) && rates.minute != null)
             cost = call.durationSeconds().multiply(rates.minute).divide(BigDecimal.valueOf(60), 12, RoundingMode.HALF_UP);

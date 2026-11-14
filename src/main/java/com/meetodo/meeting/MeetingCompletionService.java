@@ -23,6 +23,8 @@ public class MeetingCompletionService {
         Notifier notifier = notifiers.getIfAvailable();
         meeting.prepareNotification(notifier == null ? null : notifier.type());
         meetings.saveAndFlush(meeting);
+        if (meeting.getStatus() == MeetingStatus.DONE)
+            events.publishEvent(new com.meetodo.rag.index.MeetingProcessedEvent(meeting.getId()));
         if (meeting.getNotificationStatus() == NotificationStatus.PENDING)
             events.publishEvent(new MeetingFinishedEvent(meeting.getId()));
     }

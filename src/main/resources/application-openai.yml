@@ -20,3 +20,5 @@ logging:
   level:
     org.springframework.ai.retry.autoconfigure.SpringAiRetryAutoConfiguration: OFF
     org.springframework.ai.openai.OpenAiChatModel: OFF
+    # Empty embedding response warnings include the complete request text.
+    org.springframework.ai.openai.OpenAiEmbeddingModel: OFF

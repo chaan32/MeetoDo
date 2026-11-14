@@ -8,11 +8,15 @@ import java.util.function.Function;
 import java.util.stream.Stream;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
-public record UsageReport(List<UsageCall> chatCalls, UsageCall transcription) {
-    public UsageReport { chatCalls = chatCalls == null ? List.of() : List.copyOf(chatCalls); }
+public record UsageReport(List<UsageCall> chatCalls, UsageCall transcription, List<UsageCall> embeddingCalls) {
+    public UsageReport(List<UsageCall> chatCalls, UsageCall transcription) { this(chatCalls, transcription, List.of()); }
+    public UsageReport {
+        chatCalls = chatCalls == null ? List.of() : List.copyOf(chatCalls);
+        embeddingCalls = embeddingCalls == null ? List.of() : List.copyOf(embeddingCalls);
+    }
     public static UsageReport empty() { return new UsageReport(List.of(), null); }
     private List<UsageCall> calls() {
-        return Stream.concat(chatCalls.stream(), Stream.ofNullable(transcription)).toList();
+        return Stream.concat(Stream.concat(chatCalls.stream(), Stream.ofNullable(transcription)), embeddingCalls.stream()).toList();
     }
     private Long sum(Function<UsageCall, Long> field) {
         List<Long> values = calls().stream().map(field).filter(java.util.Objects::nonNull).toList();
