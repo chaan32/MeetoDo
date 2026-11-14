@@ -51,7 +51,7 @@ public class QuestionService {
 
     public QuestionResponse ask(String question,String actorSlackId,boolean diagnostic) {
         if (actorSlackId == null || actorSlackId.length()>80 || tx.execute(status -> members.findBySlackUserIdAndActiveTrue(actorSlackId).isEmpty()))
-            throw new RagQuestionException(403,"MEMBER_REQUIRED","등록된 팀원만 질문할 수 있습니다. Slack 앱 홈의 팀원 관리에서 본인을 등록하세요.");
+            throw new RagQuestionException(403,"MEMBER_REQUIRED","등록된 팀원만 질문할 수 있습니다. Slack 앱 홈의 '내 정보 등록'에서 신청한 뒤 관리자 승인을 기다리세요.");
         if (question == null || EvidenceVerifier.whitespace(question).isEmpty() || question.length()>2000)
             throw new RagQuestionException(400,"VALIDATION_ERROR","질문은 1~2000자로 입력하세요.");
         long started=System.nanoTime();

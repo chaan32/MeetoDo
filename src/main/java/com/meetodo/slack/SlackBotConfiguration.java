@@ -65,6 +65,19 @@ public class SlackBotConfiguration {
             @Qualifier("slackMeetingExecutor") ThreadPoolTaskExecutor executor, Clock clock) {
         return new SlackMeetingInputService(client, meetings, bot, executor, clock);
     }
+    @Bean @Conditional(com.meetodo.rag.config.RagEnabled.class)
+    ThreadPoolTaskExecutor slackQuestionExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1); executor.setMaxPoolSize(1); executor.setQueueCapacity(10);
+        executor.setThreadNamePrefix("slack-question-");
+        executor.setWaitForTasksToCompleteOnShutdown(false);
+        return executor;
+    }
+    @Bean @Conditional(com.meetodo.rag.config.RagEnabled.class)
+    SlackQuestionInputService slackQuestionInputService(com.meetodo.rag.question.QuestionService questions, MethodsClient client,
+            @Qualifier("slackQuestionExecutor") ThreadPoolTaskExecutor executor) {
+        return new SlackQuestionInputService(questions, client, executor);
+    }
     @Bean @Profile("openai") @Conditional(BotNotifierConfigured.class)
     SlackAudioDownloader slackAudioDownloader(MethodsClient client, Environment env) {
         return new SlackAudioDownloader(client, env.getProperty("SLACK_BOT_TOKEN"));
@@ -102,7 +115,7 @@ public class SlackBotConfiguration {
         edits.setManagement(admins, members);
         return edits;
     }
-    @Bean App slackBoltApp(Environment env, SlackBotService service, ObjectProvider<SlackMeetingInputService> inputs, SlackTaskEditService edits, SlackHomeService homes, SlackMemberManagementService memberManagement, ObjectProvider<SlackAudioInputService> audioInputs, ObjectProvider<SlackMemberRegistrationService> registrations) {
+    @Bean App slackBoltApp(Environment env, SlackBotService service, ObjectProvider<SlackMeetingInputService> inputs, SlackTaskEditService edits, SlackHomeService homes, SlackMemberManagementService memberManagement, ObjectProvider<SlackAudioInputService> audioInputs, ObjectProvider<SlackMemberRegistrationService> registrations, ObjectProvider<SlackQuestionInputService> questions) {
         App app = new App(AppConfig.builder().singleTeamBotToken(env.getProperty("SLACK_BOT_TOKEN")).build());
         app.event(com.slack.api.model.event.AppHomeOpenedEvent.class, (request, context) -> {
             var ack = context.ack();
@@ -151,7 +164,9 @@ public class SlackBotConfiguration {
         if (registration != null) registration.register(app);
         edits.register(app);
         SlackMeetingInputService input = inputs.getIfAvailable();
-        if (input != null) input.register(app);
+        SlackQuestionInputService question = questions.getIfAvailable();
+        if (input != null) { input.setQuestions(question); input.register(app); }
+        else if (question != null) question.registerOnly(app);
         SlackAudioInputService audioInput = audioInputs.getIfAvailable();
         if (audioInput != null) audioInput.register(app);
         return app;

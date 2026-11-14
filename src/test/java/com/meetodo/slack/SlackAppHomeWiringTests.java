@@ -22,7 +22,7 @@ class SlackAppHomeWiringTests {
                 mock(com.meetodo.task.TaskRepository.class),mock(com.meetodo.task.TaskService.class),
                 new com.meetodo.member.AdminAuthorization(""),java.time.Clock.systemUTC());
         var app = new SlackBotConfiguration().slackBoltApp(new MockEnvironment().withProperty("SLACK_BOT_TOKEN","test-token"),
-                bot,mock(ObjectProvider.class),mock(SlackTaskEditService.class),home,mock(SlackMemberManagementService.class),mock(ObjectProvider.class),mock(ObjectProvider.class));
+                bot,mock(ObjectProvider.class),mock(SlackTaskEditService.class),home,mock(SlackMemberManagementService.class),mock(ObjectProvider.class),mock(ObjectProvider.class),mock(ObjectProvider.class));
         // Bolt's default middleware calls auth.test; this test covers handler routing with mock transports only.
         org.springframework.test.util.ReflectionTestUtils.setField(app,"middlewareList",new java.util.ArrayList<>());
         var response = new com.slack.api.methods.response.views.ViewsPublishResponse(); response.setOk(true);
@@ -39,7 +39,7 @@ class SlackAppHomeWiringTests {
     @Test void homeCompletionRoutesToHomeService() {
         var home=mock(SlackHomeService.class); var bot=mock(SlackBotService.class);
         var app=new SlackBotConfiguration().slackBoltApp(new MockEnvironment().withProperty("SLACK_BOT_TOKEN","test-token"),
-                bot,mock(ObjectProvider.class),mock(SlackTaskEditService.class),home,mock(SlackMemberManagementService.class),mock(ObjectProvider.class),mock(ObjectProvider.class));
+                bot,mock(ObjectProvider.class),mock(SlackTaskEditService.class),home,mock(SlackMemberManagementService.class),mock(ObjectProvider.class),mock(ObjectProvider.class),mock(ObjectProvider.class));
         org.springframework.test.util.ReflectionTestUtils.setField(app,"middlewareList",new java.util.ArrayList<>());
         new SlackSocketDispatch(app,Runnable::run).receive(mock(SocketModeClient.class),"""
                 {"type":"interactive","envelope_id":"home-complete-1","payload":{"type":"block_actions",
@@ -55,7 +55,7 @@ class SlackAppHomeWiringTests {
     @Test void messagesTabDoesNotPublishHome() {
         var home=mock(SlackHomeService.class);
         var app=new SlackBotConfiguration().slackBoltApp(new MockEnvironment().withProperty("SLACK_BOT_TOKEN","test-token"),
-                mock(SlackBotService.class),mock(ObjectProvider.class),mock(SlackTaskEditService.class),home,mock(SlackMemberManagementService.class),mock(ObjectProvider.class),mock(ObjectProvider.class));
+                mock(SlackBotService.class),mock(ObjectProvider.class),mock(SlackTaskEditService.class),home,mock(SlackMemberManagementService.class),mock(ObjectProvider.class),mock(ObjectProvider.class),mock(ObjectProvider.class));
         org.springframework.test.util.ReflectionTestUtils.setField(app,"middlewareList",new java.util.ArrayList<>());
         new SlackSocketDispatch(app,Runnable::run).receive(mock(SocketModeClient.class),"""
                 {"type":"events_api","envelope_id":"messages-tab-1","payload":{"type":"event_callback",

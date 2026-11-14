@@ -31,6 +31,7 @@ public class SlackMeetingInputService {
     private final SlackBotService bot;
     private final Executor executor;
     private final Clock clock;
+    private SlackQuestionInputService questions;
     // Keep the short-lived slash responder in memory only; never persist its credential-bearing response URL.
     private final Map<String, Pending> pending = new HashMap<>();
     private record Pending(String channel, String user, Consumer<String> reply, Instant expiresAt) { }
@@ -40,10 +41,21 @@ public class SlackMeetingInputService {
         this.client = client; this.meetings = meetings; this.bot = bot; this.executor = executor; this.clock = clock;
     }
 
+    public void setQuestions(SlackQuestionInputService questions) { this.questions = questions; }
+
     public void register(App app) {
         app.command("/meetodo", (request, context) -> {
             var ack = context.ack();
             var payload = request.getPayload();
+            if (SlackQuestionInputService.isQuestionCommand(payload.getText())) {
+                Consumer<SlashCommandResponse> respond = response -> {
+                    try { context.respond(response); } catch (Exception ignored) { log.warn("Slack question private response failed"); }
+                };
+                if (SlackQuestionInputService.emptyQuestion(payload.getText().substring(2))) respond.accept(SlackQuestionInputService.usage());
+                else if (questions == null) respond.accept(SlackQuestionInputService.message("RAG 질문 기능이 비활성화되어 있어요."));
+                else questions.submit(payload.getText().substring(2), payload.getUserId(), respond);
+                return ack;
+            }
             open(payload.getTriggerId(), payload.getChannelId(), payload.getUserId(), text -> {
                 try { context.respond(SlashCommandResponse.builder().responseType("ephemeral").text(text).build()); }
                 catch (Exception ignored) { log.warn("Slack input private response failed"); }

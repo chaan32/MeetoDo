@@ -62,7 +62,7 @@ class SlackBotConfigurationTests {
         var provider=mock(org.springframework.beans.factory.ObjectProvider.class);when(provider.getIfAvailable()).thenReturn(registration);
         var app=new SlackBotConfiguration().slackBoltApp(new MockEnvironment().withProperty("SLACK_BOT_TOKEN","test-token"),
                 mock(SlackBotService.class),mock(org.springframework.beans.factory.ObjectProvider.class),mock(SlackTaskEditService.class),
-                mock(SlackHomeService.class),mock(SlackMemberManagementService.class),mock(org.springframework.beans.factory.ObjectProvider.class),provider);
+                mock(SlackHomeService.class),mock(SlackMemberManagementService.class),mock(org.springframework.beans.factory.ObjectProvider.class),provider,mock(org.springframework.beans.factory.ObjectProvider.class));
         verify(registration).register(app);
     }
     private SlackBotService configuredBot(MockEnvironment env) {
