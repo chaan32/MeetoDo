@@ -27,4 +27,15 @@ class SpringAiRagAnswerClientTests {
         assertThat(options.getInternalToolExecutionEnabled()).isFalse();
         assertThat(prompt.getValue().getContents()).contains("회의 원문","doc");
     }
+    @Test void outputContractUsesOnlyDocumentMeetingAndQuoteNotTaskId() {
+        // 서버가 아는 taskId를 모델 출력/입력 계약에서 제거한다.
+        ChatModel model=mock(ChatModel.class);
+        var client=new SpringAiRagAnswerClient(model,new ObjectMapper());
+        var source=new RagSourceSnapshot("task","TASK",1L,9L,0,"문서 작성",Instant.EPOCH,"","ns");
+        client.answer("질문",List.of(source));
+        var prompt=ArgumentCaptor.forClass(Prompt.class);
+        verify(model,times(1)).call(prompt.capture());
+        assertThat(prompt.getValue().getContents()).contains("documentId","meetingId","quote","서버")
+                .doesNotContain("\"taskId\"","taskId를 반드시");
+    }
 }

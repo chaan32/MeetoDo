@@ -37,9 +37,10 @@ public class EvidenceVerifier {
                 String id=item.path("documentId").isTextual() ? item.path("documentId").textValue() : null;
                 checks.add(new Check(index,id,itemReason));
                 if ("OK".equals(itemReason)) {
-                    JsonNode task=item.get("taskId");
+                    RagSourceSnapshot source=sources.stream().filter(value -> value.documentId().equals(id)
+                            && value.meetingId().equals(item.path("meetingId").longValue())).findFirst().orElseThrow();
                     verified.add(new Evidence(id,item.path("meetingId").longValue(),item.path("quote").textValue(),
-                            task==null || task.isNull() ? null : task.longValue()));
+                            "TASK".equals(source.kind()) ? source.taskId() : null));
                 } else if (reason==null) reason=itemReason;
             }
         }
@@ -74,8 +75,8 @@ public class EvidenceVerifier {
         if (task!=null && !task.isNull() && (!task.isIntegralNumber() || !task.canConvertToLong())) return "TASK_ID_INVALID";
         Long taskId=task==null || task.isNull() ? null : task.longValue();
         if ("TASK".equals(source.kind())) {
-            if (taskId==null) return "TASK_ID_MISSING";
-            if (!Objects.equals(source.taskId(),taskId)) return "TASK_ID_MISMATCH";
+            if (taskId==null && source.taskId()==null) return "TASK_ID_MISSING";
+            if (taskId!=null && !Objects.equals(source.taskId(),taskId)) return "TASK_ID_MISMATCH";
         } else {
             if (!"MEETING".equals(source.kind())) return "SOURCE_KIND_INVALID";
             if (taskId!=null) return "TASK_ID_ON_MEETING";

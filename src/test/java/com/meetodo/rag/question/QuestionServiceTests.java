@@ -197,4 +197,24 @@ class QuestionServiceTests {
   String value=(String)org.springframework.test.util.ReflectionTestUtils.getField(saved.getValue(),"verificationDiagnostics");
   assertThat(value).doesNotContain(token);
  }
+ @Test void omittedTaskIdReturnsCurrentTaskAndKeepsOkDiagnostics() throws Exception {
+  // 실제 출력 형태(documentId/meetingId/quote만)로 현재 DB 상태와 OK 진단을 조립한다.
+  var task=Task.create("문서 작성",null,LocalDate.of(2026,11,20));
+  org.springframework.test.util.ReflectionTestUtils.setField(task,"id",9L);
+  when(documents.sourceSnapshot("doc",1L)).thenReturn(Optional.of(new RagSourceSnapshot("doc","TASK",1L,9L,0,"문서 작성",Instant.EPOCH,"","ns")));
+  when(tasks.findAllWithAssigneeByIdIn(any())).thenReturn(List.of(task));
+  when(retriever.retrieve(anyString(),anyBoolean())).thenReturn(List.of(Document.builder().id("doc").text("old").metadata(Map.of("meetingId",1L,"taskId",9L,"kind","TASK","namespace","ns")).score(0.9).build()));
+  when(client.answer(anyString(),anyList())).thenReturn(response("{\"found\":true,\"evidence\":[{\"documentId\":\"doc\",\"meetingId\":1,\"quote\":\"문서 작성\"}]}"));
+  var result=service.ask("질문","U1",false);
+  assertThat(result.status()).isEqualTo(QuestionStatus.ANSWERED);
+  assertThat(result.currentTasks()).singleElement().satisfies(current->{
+   assertThat(current.taskId()).isEqualTo(9L);
+   assertThat(current.dueDate()).isEqualTo(LocalDate.of(2026,11,20));
+  });
+  var saved=org.mockito.ArgumentCaptor.forClass(Question.class); verify(questions,times(2)).saveAndFlush(saved.capture());
+  var diagnostic=new ObjectMapper().readTree(saved.getValue().getVerificationDiagnostics());
+  assertThat(diagnostic.path("reason").isNull()).isTrue();
+  assertThat(diagnostic.path("checks").get(0).path("reason").asText()).isEqualTo("OK");
+  verify(client,times(1)).answer(anyString(),anyList());
+ }
 }

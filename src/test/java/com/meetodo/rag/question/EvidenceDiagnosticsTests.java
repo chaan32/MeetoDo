@@ -50,8 +50,28 @@ class EvidenceDiagnosticsTests {
     @Test void wrongQuoteReportsMismatch() { // 문장 의미가 비슷해도 인용 부분 일치만 허용한다.
         reject(body(item("doc",1,"민수는 문서를 작성한다.","")),"QUOTE_NOT_IN_SOURCE");
     }
-    @Test void taskWithoutIdReportsMissing() { // TASK 근거에는 정확한 taskId가 필요하다.
-        reject(body(item("task",1,"문서 작성","")),"TASK_ID_MISSING");
+    @Test void taskWithoutIdUsesCanonicalTaskId() { // 실제 관측처럼 세 필드만 출력하면 검증된 source의 ID를 채운다.
+        var result=verifier.verify(body(item("task",1,"문서 작성","")),List.of(task));
+        assertThat(result).singleElement().satisfies(evidence -> assertThat(evidence.taskId()).isEqualTo(9L));
+    }
+    @Test void nullTaskIdUsesCanonicalTaskId() { // 명시적 null도 검증된 TASK 문서의 서버 ID로 채운다.
+        var result=verifier.verify(body(item("task",1,"문서 작성",",\"taskId\":null")),List.of(task));
+        assertThat(result).singleElement().satisfies(evidence -> assertThat(evidence.taskId()).isEqualTo(9L));
+    }
+    @Test void matchingExplicitTaskIdRemainsAccepted() { // 이전 형식의 정확한 taskId도 계속 허용한다.
+        var result=verifier.verify(body(item("task",1,"문서 작성",",\"taskId\":9")),List.of(task));
+        assertThat(result).singleElement().satisfies(evidence -> assertThat(evidence.taskId()).isEqualTo(9L));
+    }
+    @Test void omittedTaskIdDoesNotBypassWholeAnswerRejection() { // ID 보완 가능 근거가 있어도 다른 인용이 틀리면 전체를 거절한다.
+        var error=reject(body(item("task",1,"문서 작성","")+","+item("doc",1,"틀린 인용","")),"QUOTE_NOT_IN_SOURCE");
+        var checks=json.valueToTree(ReflectionTestUtils.getField(error,"checks"));
+        assertThat(checks.get(0).path("reason").asText()).isEqualTo("OK");
+        assertThat(checks.get(1).path("reason").asText()).isEqualTo("QUOTE_NOT_IN_SOURCE");
+    }
+    @Test void missingCanonicalTaskIdIsNotInvented() { // 서버 원본에도 ID가 없으면 추측해서 채우지 않는다.
+        var invalid=new RagSourceSnapshot("task","TASK",1L,null,0,"문서 작성",Instant.EPOCH,"","ns");
+        assertThatThrownBy(()->verifier.verify(body(item("task",1,"문서 작성","")),List.of(invalid)))
+                .isInstanceOf(EvidenceVerifier.InvalidEvidence.class);
     }
     @Test void taskWithWrongIdReportsMismatch() { // 검색 문서의 taskId와 다른 값은 거절한다.
         reject(body(item("task",1,"문서 작성",",\"taskId\":8")),"TASK_ID_MISMATCH");
