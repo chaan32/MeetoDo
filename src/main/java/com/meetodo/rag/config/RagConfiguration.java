@@ -7,7 +7,7 @@ import org.springframework.ai.document.MetadataMode;
 import org.springframework.ai.openai.OpenAiEmbeddingModel;
 import org.springframework.ai.openai.OpenAiEmbeddingOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
-import org.springframework.ai.vectorstore.SimpleVectorStore;
+import com.meetodo.rag.search.RagMemoryVectorStore;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
 import org.springframework.boot.sql.init.dependency.DependsOnDatabaseInitialization;
@@ -37,7 +37,7 @@ public class RagConfiguration {
 
     @Bean @Profile("local & !docker")
     VectorStore localRagVectorStore(MeteredEmbeddingModel model) {
-        return SimpleVectorStore.builder(model).build();
+        return new RagMemoryVectorStore(model);
     }
 
     @Bean @Profile("docker") @DependsOnDatabaseInitialization

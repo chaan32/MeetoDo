@@ -21,6 +21,8 @@ import static org.mockito.Mockito.*;
 class RagMemberRefreshTests {
     @Autowired ApplicationEventPublisher events;
     @Autowired PlatformTransactionManager manager;
+    @MockitoBean com.meetodo.rag.search.RagRetriever questionRetriever;
+    @MockitoBean com.meetodo.rag.question.RagAnswerClient questionAnswerClient;
     @MockitoBean RagIndexer indexer;
     @MockitoBean VectorStore vectors;
     @MockitoBean(name = "ragIndexExecutor") Executor executor;

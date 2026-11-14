@@ -23,6 +23,8 @@ class RagIndexCommitIntegrationTests {
     @Autowired MeetingRepository meetings;
     @Autowired RagIndexRunRepository runs;
     @Autowired PlatformTransactionManager manager;
+    @MockitoBean com.meetodo.rag.search.RagRetriever questionRetriever;
+    @MockitoBean com.meetodo.rag.question.RagAnswerClient questionAnswerClient;
     @MockitoBean VectorStore vectors;
     @MockitoBean(name="ragIndexExecutor") Executor executor;
 
