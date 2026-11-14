@@ -24,7 +24,7 @@ public class SelfHostingEnvironmentPostProcessor implements EnvironmentPostProce
                 .filter(name -> environment.getProperty(name, "").isBlank())
                 .toList();
         if (!missing.isEmpty()) {
-            throw new IllegalStateException("Missing required environment variables: " + String.join(", ", missing));
+            throw new MissingRequiredEnvironmentException(missing);
         }
     }
 

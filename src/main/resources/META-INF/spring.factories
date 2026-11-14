@@ -1,1 +1,2 @@
 org.springframework.boot.env.EnvironmentPostProcessor=com.meetodo.config.SelfHostingEnvironmentPostProcessor
+org.springframework.boot.diagnostics.FailureAnalyzer=com.meetodo.config.MissingRequiredEnvironmentFailureAnalyzer
