@@ -26,24 +26,24 @@
 
 ```mermaid
 flowchart LR
-    U[Slack 사용자] -->|명령·모달·버튼·DM 음성| S[Socket Mode / Bolt]
-    A[Swagger / REST] --> M[회의 처리 서비스]
+    U["Slack 사용자"] -->|"명령·모달·버튼·DM 음성"| S["Socket Mode / Bolt"]
+    A["Swagger / REST"] --> M["회의 처리 서비스"]
     S --> M
-    M -->|음성이면 전사| STT[OpenAI Transcription]
+    M -->|"음성이면 전사"| STT["OpenAI Transcription"]
     STT --> M
-    M --> L[OpenAI Chat / Tool Calling]
-    L -->|도구 요청| T[서버 검증·팀원 조회·할 일 등록]
-    T -->|도구 결과| L
-    T --> DB[(PostgreSQL / Flyway)]
+    M --> L["OpenAI Chat / Tool Calling"]
+    L -->|"도구 요청"| T["서버 검증·팀원 조회·할 일 등록"]
+    T -->|"도구 결과"| L
+    T --> DB[("PostgreSQL / Flyway")]
     M --> DB
-    DB -->|커밋 후 색인| V[VectorStore / 임베딩]
-    S -->|명시적 질문| Q[검색·근거 검증]
+    DB -->|"커밋 후 색인"| V["VectorStore / 임베딩"]
+    S -->|"명시적 질문"| Q["검색·근거 검증"]
     A --> Q
     Q --> V
-    Q -->|현재 할 일 재조회| DB
-    Q -->|개인 응답| U
-    DB -->|커밋 후| N[Notifier / Slack Bot]
-    N -->|채널·담당자 DM·Home 갱신| U
+    Q -->|"현재 할 일 재조회"| DB
+    Q -->|"개인 응답"| U
+    DB -->|"커밋 후"| N["Notifier / Slack Bot"]
+    N -->|"채널·담당자 DM·Home 갱신"| U
 ```
 
 ## 할 수 있는 일
@@ -508,10 +508,6 @@ C의 미정 경로는 당시 정책상 필수인 `findTasks`를 모델이 3회 �
 - REST API 인증, 멀티 테넌트 SaaS.
 - Kubernetes의 Socket 연결·스케줄러·롤링 업데이트 검증.
 - 독립 평가 세트·토큰 비용 비교, 하이브리드 검색 검토, 긴 녹음 분할·제목 유사 경고.
-
-## Codex 활용
-
-구현에 Codex를 활용했고, 설계·정책 결정, 실제 문제 발견·원인 분석, Slack 실행 검증과 실측은 개발자가 수행했습니다.
 
 ## 라이선스
 
