@@ -15,14 +15,14 @@ public record MeetingResponse(Long meetingId, Long duplicateOfMeetingId, Meeting
                               Long processingTimeMs, int llmCallCount, int toolCallCount,
                               int validationFailureCount, NotificationStatus notificationStatus, String notificationType,
                               String notificationErrorCode, Instant notifiedAt, com.meetodo.meeting.MeetingSource source,
-                              String sttModel, Long transcriptionTimeMs) {
+                              String sttModel, Long transcriptionTimeMs, com.meetodo.usage.UsageReport usage) {
     public MeetingResponse(Long meetingId, Long duplicateOfMeetingId, MeetingStatus status, String summary,
             List<MeetingTaskResponse> tasks, int unassignedCount, Long processingTimeMs, int llmCallCount,
             int toolCallCount, int validationFailureCount, NotificationStatus notificationStatus, String notificationType,
             String notificationErrorCode, Instant notifiedAt) {
         this(meetingId, duplicateOfMeetingId, status, summary, tasks, unassignedCount, processingTimeMs,
                 llmCallCount, toolCallCount, validationFailureCount, notificationStatus, notificationType,
-                notificationErrorCode, notifiedAt, null, null, null);
+                notificationErrorCode, notifiedAt, null, null, null, com.meetodo.usage.UsageReport.empty());
     }
     public static MeetingResponse from(Meeting meeting, List<Task> tasks, Map<Long, String> resultTypes,
                                        Map<Long, Long> mentionCounts) {
@@ -48,6 +48,6 @@ public record MeetingResponse(Long meetingId, Long duplicateOfMeetingId, Meeting
                 unassigned, meeting.getProcessingTimeMs(), meeting.getLlmCallCount(),
                 meeting.getToolCallCount(), meeting.getValidationFailureCount(), meeting.getNotificationStatus(),
                 meeting.getNotificationType(), meeting.getNotificationErrorCode(), meeting.getNotifiedAt(),
-                meeting.getSource(), meeting.getSttModel(), meeting.getTranscriptionTimeMs());
+                meeting.getSource(), meeting.getSttModel(), meeting.getTranscriptionTimeMs(), meeting.getUsageReport());
     }
 }

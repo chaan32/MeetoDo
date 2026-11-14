@@ -4,6 +4,9 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import com.meetodo.usage.UsageCall;
+import com.meetodo.usage.UsageReport;
+import com.meetodo.usage.UsagePricing;
 import com.meetodo.meeting.dto.MeetingRequest;
 import com.meetodo.meeting.dto.MeetingHistoryResponse;
 import com.meetodo.meeting.dto.MeetingResponse;
@@ -22,12 +25,13 @@ public class MeetingApplicationService {
     private final Clock clock;
     private final MeetingResults results;
     private final MeetingCompletionService completion;
+    private final UsagePricing pricing;
 
     public MeetingApplicationService(ObjectProvider<MeetingAgent> agents, MeetingRepository meetings,
                                      ToolExecutionService toolExecution, Clock clock, MeetingResults results,
-                                     MeetingCompletionService completion) {
+                                     MeetingCompletionService completion, UsagePricing pricing) {
         this.agents = agents; this.meetings = meetings; this.toolExecution = toolExecution;
-        this.clock = clock; this.results = results; this.completion = completion;
+        this.clock = clock; this.results = results; this.completion = completion; this.pricing = pricing;
     }
 
     public MeetingResponse submitFromSlack(MeetingRequest request, java.util.function.Consumer<Meeting> beforeSave,
@@ -41,7 +45,15 @@ public class MeetingApplicationService {
     }
 
     public MeetingResponse submitAudio(MeetingRequest request, String model, long transcriptionTimeMs) {
-        return submit(request, MeetingSource.AUDIO, meeting -> meeting.recordTranscription(model, transcriptionTimeMs), meeting -> { });
+        return submitAudio(request, model, transcriptionTimeMs,
+                UsageCall.raw(1, model, null, null, null, null, "unavailable"));
+    }
+
+    public MeetingResponse submitAudio(MeetingRequest request, String model, long transcriptionTimeMs, UsageCall usage) {
+        return submit(request, MeetingSource.AUDIO, meeting -> {
+            meeting.recordTranscription(model, transcriptionTimeMs);
+            meeting.recordTranscriptionUsage(usage);
+        }, meeting -> { });
     }
 
     public MeetingResponse submitAudioFromSlack(MeetingRequest request, String model, long transcriptionTimeMs,
@@ -52,8 +64,16 @@ public class MeetingApplicationService {
     public MeetingResponse submitAudioFromSlack(MeetingRequest request, String model, long transcriptionTimeMs,
                                                java.util.function.Consumer<Meeting> beforeSave,
                                                java.util.function.Consumer<Meeting> discardProgress) {
+        return submitAudioFromSlack(request, model, transcriptionTimeMs,
+                UsageCall.raw(1, model, null, null, null, null, "unavailable"), beforeSave, discardProgress);
+    }
+
+    public MeetingResponse submitAudioFromSlack(MeetingRequest request, String model, long transcriptionTimeMs,
+                                               UsageCall usage, java.util.function.Consumer<Meeting> beforeSave,
+                                               java.util.function.Consumer<Meeting> discardProgress) {
         return submit(request, MeetingSource.SLACK_AUDIO, meeting -> {
             meeting.recordTranscription(model, transcriptionTimeMs);
+            meeting.recordTranscriptionUsage(usage);
             beforeSave.accept(meeting);
         }, discardProgress);
     }
@@ -90,12 +110,14 @@ public class MeetingApplicationService {
             result = agent.process(meeting);
         } catch (MeetingAgentException exception) {
             meeting = currentProcessingMeeting(meeting);
+            recordUsage(meeting, exception.getUsageReport());
             meeting.fail(Instant.now(clock), exception.getLlmCallCount(), exception.getToolCallCount(),
                     toolExecution.validationFailureCount(meeting.getId()));
             completion.finish(meeting);
             throw new MeetingProcessingException(meeting.getId());
         } catch (Exception exception) {
             meeting = currentProcessingMeeting(meeting);
+            recordUsage(meeting, UsageReport.empty());
             meeting.fail(Instant.now(clock), 0, 0, toolExecution.validationFailureCount(meeting.getId()));
             completion.finish(meeting);
             throw new MeetingProcessingException(meeting.getId());
@@ -104,10 +126,15 @@ public class MeetingApplicationService {
         Meeting previousWithSameTaskSet = results.existingTaskSourceMeeting(meeting.getId());
         if (previousWithSameTaskSet != null) meeting.markDuplicateOf(previousWithSameTaskSet);
 
+        recordUsage(meeting, result.usageReport());
         meeting.complete(result.summary(), Instant.now(clock), result.llmCallCount(),
                 result.toolCallCount(), result.validationFailureCount());
         completion.finish(meeting);
         return results.get(meeting.getId());
+    }
+
+    private void recordUsage(Meeting meeting, UsageReport chat) {
+        meeting.recordUsage(pricing.price(new UsageReport(chat.chatCalls(), meeting.getUsageReport().transcription())));
     }
 
     public MeetingResponse get(Long id) { return results.get(id); }

@@ -36,19 +36,24 @@ r = json.loads(raw); t = (r.get("tasks") or [{}])[0]
 who = (t.get("assigneeTeam") or f"미정({t.get('unassignedReason')})") if r.get("status") == "DONE" else f"오류({r.get('code', r.get('status'))})"
 title = (t.get("title") or "").replace("|", "\\|").replace("\n", " ")
 actual = t.get("dueDate") or None
+usage = r.get("usage") or {}
+input_tokens = usage.get("inputTokens")
+output_tokens = usage.get("outputTokens")
+input_tokens = "미제공" if input_tokens is None else input_tokens
+output_tokens = "미제공" if output_tokens is None else output_tokens
 expected_text = expected.isoformat() if expected else "없음" if expression == "없음" else "미지정"
 match = "미확인" if not expression else "예" if r.get("status") == "DONE" and r.get("tasks") and actual == (expected.isoformat() if expected else None) else "아니오"
 if reference.isoformat() != finished:
     match = "기준일 변경: 재측정"
-print(f"| {label} | {rnd} | {who} | {r.get('llmCallCount')} | {r.get('toolCallCount')} | {r.get('validationFailureCount')} | {r.get('processingTimeMs')} | {title} | {reference} | {expected_text} | {actual or '없음'} | {match} |")
+print(f"| {label} | {rnd} | {who} | {r.get('llmCallCount')} | {r.get('toolCallCount')} | {r.get('validationFailureCount')} | {r.get('processingTimeMs')} | {title} | {reference} | {expected_text} | {actual or '없음'} | {match} | {input_tokens} | {output_tokens} |")
 PY
   local mid=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('meetingId',1))" "$res")
   curl -s "localhost:8080/api/meetings/${mid}/logs" > "/tmp/meetodo-${label}-${round}-logs.json"
   kill $pid; wait $pid 2>/dev/null
 }
 
-printf '%s\n' "| 회의록 | 회차 | 결과 | LLM | 도구 | 검증실패 | 시간(ms) | 제목 | 기준일(Seoul) | 기대 마감일 | 실제 마감일 | 일치 |"
-printf '%s\n' "|---|---|---|---:|---:|---:|---:|---|---|---|---|---|"
+printf '%s\n' "| 회의록 | 회차 | 결과 | LLM | 도구 | 검증실패 | 시간(ms) | 제목 | 기준일(Seoul) | 기대 마감일 | 실제 마감일 | 일치 | 입력 토큰 | 출력 토큰 |"
+printf '%s\n' "|---|---|---|---:|---:|---:|---:|---|---|---|---|---|---:|---:|"
 for i in 1 2 3; do
   run_case "백엔드팀지영" '{"rawText":"백엔드팀 지영은 로그인 API 오류 처리를 2026-11-20까지 수정한다."}' $i "2026-11-20"
 done

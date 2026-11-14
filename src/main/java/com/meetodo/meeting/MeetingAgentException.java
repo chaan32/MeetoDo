@@ -5,9 +5,16 @@ public class MeetingAgentException extends RuntimeException {
     private final String errorCode;
     private final int llmCallCount;
     private final int toolCallCount;
+    private final com.meetodo.usage.UsageReport usageReport;
 
     public MeetingAgentException(String errorCode, int llmCallCount, int toolCallCount) {
+        this(errorCode, llmCallCount, toolCallCount, com.meetodo.usage.UsageReport.empty());
+    }
+
+    public MeetingAgentException(String errorCode, int llmCallCount, int toolCallCount,
+                                 com.meetodo.usage.UsageReport usageReport) {
         super(publicMessage(errorCode));
+        this.usageReport = usageReport;
         this.errorCode = errorCode;
         this.llmCallCount = llmCallCount;
         this.toolCallCount = toolCallCount;
@@ -21,6 +28,7 @@ public class MeetingAgentException extends RuntimeException {
         };
     }
 
+    public com.meetodo.usage.UsageReport getUsageReport() { return usageReport; }
     public String getErrorCode() { return errorCode; }
     public int getLlmCallCount() { return llmCallCount; }
     public int getToolCallCount() { return toolCallCount; }

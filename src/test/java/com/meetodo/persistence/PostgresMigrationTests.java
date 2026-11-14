@@ -594,4 +594,34 @@ class PostgresMigrationTests {
     private void meeting(long id, String hash) {
         jdbc.update("INSERT INTO meetings(id, raw_text, content_hash, source, status, llm_call_count, tool_call_count, validation_failure_count, created_at) VALUES (?, 'meeting', ?, 'API_TEXT', 'PENDING', 0, 0, 0, now())", id, hash);
     }
+    @Test void usageReportRoundTripsThroughPostgresTextWithoutLobOid() {
+        // PostgreSQL text 사용량 보고서가 호출·음성 길이·금액을 OID 변환 없이 보존한다.
+        var meeting = com.meetodo.meeting.Meeting.create("사용량 PostgreSQL 검증", com.meetodo.meeting.MeetingSource.AUDIO);
+        var chat = new com.meetodo.usage.UsageCall(1, "chat-model", 100L, 20L, 120L, null,
+                "tokens", new java.math.BigDecimal("0.00036"), "ESTIMATED");
+        var audio = new com.meetodo.usage.UsageCall(1, "audio-model", null, null, null,
+                new java.math.BigDecimal("30.5"), "duration", new java.math.BigDecimal("0.061"), "ESTIMATED");
+        var usage = new com.meetodo.usage.UsageReport(List.of(chat), audio);
+        meeting.recordUsage(usage);
+        long id = meetings.saveAndFlush(meeting).getId();
+        assertThat(meetings.findById(id).orElseThrow().getUsageReport()).isEqualTo(usage);
+        assertThat(jdbc.queryForObject("SELECT usage_report FROM meetings WHERE id=?", String.class, id))
+                .contains("chat-model", "durationSeconds").doesNotContain("rawText", "nativeUsage");
+        assertThat(jdbc.queryForObject("SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='meetings' AND column_name='usage_report'", String.class))
+                .isEqualTo("text");
+    }
+
+    @Test void usageMigrationPreservesExistingMeetingsWithoutInventingUsage() {
+        // V12 기존 회의에 V13을 적용해도 본문은 유지하고 사용량·비용은 백필하지 않는다.
+        String schema = "usage_v12_upgrade";
+        Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas(schema).target("12").load().migrate();
+        jdbc.update("INSERT INTO usage_v12_upgrade.meetings(raw_text,content_hash,source,status,llm_call_count,tool_call_count,validation_failure_count,created_at) VALUES ('기존 사용량 없는 회의','legacy-usage','API_TEXT','DONE',1,0,0,now())");
+        var upgrade = Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas(schema).target("13").load();
+        assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(1);
+        assertThat(upgrade.migrate().migrationsExecuted).isZero();
+        assertThat(jdbc.queryForMap("SELECT raw_text,usage_report FROM usage_v12_upgrade.meetings"))
+                .containsEntry("raw_text", "기존 사용량 없는 회의").containsEntry("usage_report", null);
+    }
 }

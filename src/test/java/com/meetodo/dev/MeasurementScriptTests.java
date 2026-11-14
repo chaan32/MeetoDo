@@ -34,18 +34,18 @@ class MeasurementScriptTests {
         // 스크립트의 실제 표 출력 Python만 실행해 원래 지표와 제목 열을 함께 검증한다.
         String script = Files.readString(Path.of("measure.sh"));
         String line = report(response, "2026-11-20", "2026-11-13");
-        assertThat(line.strip()).isEqualTo("| 백엔드팀지영 | 1 | 백엔드팀 | 4 | 3 | 0 | 6365 | 로그인 API 오류 처리 | 2026-11-13 | 2026-11-20 | 2026-11-20 | 예 |");
+        assertThat(line.strip()).isEqualTo("| 백엔드팀지영 | 1 | 백엔드팀 | 4 | 3 | 0 | 6365 | 로그인 API 오류 처리 | 2026-11-13 | 2026-11-20 | 2026-11-20 | 예 | 미제공 | 미제공 |");
         assertThat(script).contains("| 회의록 | 회차 | 결과 | LLM | 도구 | 검증실패 | 시간(ms) | 제목 |");
     }
     @Test void calculatesExpectedNextFridayFromCapturedSeoulDate() throws Exception {
         // G 상대 날짜의 기대값을 서버와 독립된 달력 계산으로 비교한다.
-        assertThat(report(response, "다음 주 금요일", "2026-11-13")).endsWith("| 2026-11-20 | 2026-11-20 | 예 |\n");
+        assertThat(report(response, "다음 주 금요일", "2026-11-13")).endsWith("| 2026-11-20 | 2026-11-20 | 예 | 미제공 | 미제공 |\n");
     }
 
     @Test void reportsObservedWrongTuesdayAsMismatch() throws Exception {
         // 실제 개선 전 날짜2026-11-24는 다음 주 금요일의 정답과 다르다.
         assertThat(report(response.replace("2026-11-20", "2026-11-24"), "다음 주 금요일", "2026-11-13"))
-                .endsWith("| 2026-11-20 | 2026-11-24 | 아니오 |\n");
+                .endsWith("| 2026-11-20 | 2026-11-24 | 아니오 | 미제공 | 미제공 |\n");
     }
 
     @Test void calculatesSundayForEndOfThisWeek() throws Exception {
@@ -70,7 +70,7 @@ class MeasurementScriptTests {
 
     @Test void failedResponseIsNeverConsideredDateMatch() throws Exception {
         // 실패 응답의 빈 tasks와 마감일 없음은 정답으로 집계하지 않는다.
-        assertThat(report("{\"status\":\"FAILED\",\"tasks\":[]}", "없음", "2026-11-13")).endsWith("| 없음 | 없음 | 아니오 |\n");
+        assertThat(report("{\"status\":\"FAILED\",\"tasks\":[]}", "없음", "2026-11-13")).endsWith("| 없음 | 없음 | 아니오 | 미제공 | 미제공 |\n");
     }
 
 
@@ -87,6 +87,24 @@ class MeasurementScriptTests {
     @Test void emptyFilterKeepsOriginalFullRunSelection() throws Exception {
         // 선택 인자를 생략하면 기존 전체 실행 방식이 유지된다.
         assertThat(selectCase("", "백엔드팀지영")).isEqualTo("백엔드팀지영");
+    }
+
+    @Test void printsReportedInputAndOutputTokens() throws Exception {
+        // 사용량 숫자는 응답 원값을 표시하며 모델 호출이나 가격 추정을 하지 않는다.
+        String measured = response.substring(0, response.length() - 1)
+                + ",\"usage\":{\"inputTokens\":1234,\"outputTokens\":56}}";
+        assertThat(report(measured, "2026-11-20", "2026-11-13"))
+                .endsWith("| 1234 | 56 |\n");
+    }
+
+    @Test void distinguishesUnavailableTokensFromReportedZero() throws Exception {
+        // 사용량 미제공을 0으로 바꾸면 비용·호출 관찰을 왜곡하므로 구분한다.
+        assertThat(report(response, "2026-11-20", "2026-11-13"))
+                .endsWith("| 미제공 | 미제공 |\n");
+        String measured = response.substring(0, response.length() - 1)
+                + ",\"usage\":{\"inputTokens\":0,\"outputTokens\":0}}";
+        assertThat(report(measured, "2026-11-20", "2026-11-13"))
+                .endsWith("| 0 | 0 |\n");
     }
 
     private String selectCase(String filter, String label) throws Exception {

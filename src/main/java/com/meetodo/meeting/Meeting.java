@@ -9,6 +9,10 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
+import com.meetodo.usage.UsageReport;
+import com.meetodo.usage.UsageCall;
+import com.meetodo.usage.UsageReportConverter;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -100,6 +104,16 @@ public class Meeting {
     private String sttModel;
     @Column(name = "transcription_time_ms")
     private Long transcriptionTimeMs;
+
+    @Convert(converter = UsageReportConverter.class)
+    @Column(name = "usage_report", columnDefinition = "text")
+    private UsageReport usageReport;
+
+    public UsageReport getUsageReport() { return usageReport == null ? UsageReport.empty() : usageReport; }
+    public void recordUsage(UsageReport report) { this.usageReport = report; }
+    public void recordTranscriptionUsage(UsageCall usage) {
+        this.usageReport = new UsageReport(getUsageReport().chatCalls(), usage);
+    }
 
     public void recordTranscription(String model, long elapsedMs) {
         if (model == null || !model.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,99}") || elapsedMs < 0)

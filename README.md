@@ -539,3 +539,15 @@ Docker에는 개발 샘플 팀원이 없다. MEETODO_ADMIN_SLACK_IDS 사용자�
 미등록 사용자는 앱 Home의 **내 정보 등록**에서 성·이름·팀을 신청한다. Slack 사용자는 본인으로 고정된다. 기존 팀 선택과 새 팀 입력 중 하나를 사용하며 PENDING 신청은 담당자 후보에 포함되지 않는다. 관리자는 요청 DM에서 승인·수정 후 승인·거절한다. 승인하면 활성 Member가 생기고, 거절하면 사유와 함께 안내한 뒤 재신청할 수 있다. 다른 관리자 DM도 처리 상태로 갱신한다. 동명이인은 경고하되 승인은 허용한다.
 
 관리자 권한은 MEETODO_ADMIN_SLACK_IDS로 확인하며 기존 직접 등록도 유지한다. 동일 사용자 대기 신청은 DB 유니크, 결정은 요청 행 잠금으로 한 번만 처리한다. 신청·결정·수정 이력과 관리자 DM 좌표는 V11/V12로 저장한다. 추가 Slack 권한·이벤트는 없으며 이번 단계 때문에 재설치할 필요는 없다. 등록 알림은 새 업무 DM 설정과 별개다. 알림 실패는 신청·승인 결과를 되돌리지 않으며 자동 재시도는 없다.
+
+## 회의별 토큰·예상 비용
+
+POST/GET 회의 응답의 `usage`에 `chatCalls`, `transcription`, 입력·출력·전체 토큰 합계, `usageStatus`, `estimatedCostUsd`, `costStatus`를 제공한다. 공급자가 실제 반환한 값만 저장하고 미제공과 명시적0을 구분한다. 실패한 LLM 호출은 사용량 미제공으로 표시하며 앞선 응답의 사용량은 보존한다. 기존 데이터는 백필하지 않는다. V13은 nullable text JSON을 추가한다.
+
+단가는 .env.example의 MEETODO_PRICE_CHAT_MODEL/INPUT_PER_MILLION/OUTPUT_PER_MILLION, MEETODO_PRICE_STT_MODEL/INPUT_PER_MILLION/OUTPUT_PER_MILLION/PER_MINUTE로 선택 설정한다(각 변수는 MEETODO_PRICE_CHAT_ 또는 MEETODO_PRICE_STT_ 접두사 사용). USD/100만 입력·출력 토큰 또는 USD/분이며 기본 단가가 없다. 응답에 기록된 모델명과 정확히 일치할 때만 계산한다. 먼저 실제 응답의 model을 확인하고 단가를 채워 재시작하면 이후 처리 건부터 적용된다. 기존 비용은 GET 때 다시 계산하지 않는다. 단가 없음은 PRICE_NOT_CONFIGURED, 사용량 없음은 USAGE_UNAVAILABLE, 일부 누락은 PARTIAL_USAGE/PARTIAL_PRICE로 표시하고 전체 비용은 null이다.
+
+캐시 할인·음성/텍스트 세부 요율·세금·크레딧을 구분하지 않는 설정 기반 예상치로 실제 청구액이 아니다. 전사 실패나 전사 후 본문 중복으로 기존 회의를 반환한 요청은 새 회의 보고서가 남지 않는다. 회의에 연결된 사용량 기록이며 API 전체 청구 원장이 아니다. 실제 금액은 측정 전이다.
+
+Spring AI1.1.8의 ChatResponseMetadata.getUsage/EmptyUsage/OpenAiChatModel과 OpenAiAudioApi.createTranscription 소스를 확인했다. 기본 StructuredResponse에는 usage가 없어 기존 generic 전사 응답 DTO를 확장했다. [공식 전사 응답](https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create)은 tokens 또는 duration.seconds를 제공할 수 있다. 서버 지연이나 파일 크기로 음성 길이를 추정하지 않는다.
+
+measure.sh 결과 끝에 입력·출력 토큰 열을 추가했다. 스크립트 전체 실행은 개발 data/ 삭제·키체인 읽기·실제 호출을 하므로 이번 자동 테스트에서는 표 출력 부분만 고정 응답으로 실행했다. 보존 데이터가 없는 개발 환경에서 사용자가 직접 실행한다.

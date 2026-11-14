@@ -4,6 +4,12 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.ArrayList;
+import com.meetodo.usage.UsageCall;
+import com.meetodo.usage.UsageReport;
+import org.springframework.ai.chat.metadata.EmptyUsage;
+import org.springframework.ai.chat.metadata.Usage;
+import org.springframework.ai.openai.api.OpenAiApi;
 import java.util.Map;
 
 import com.meetodo.tools.CreateTaskTool;
@@ -63,6 +69,7 @@ public class SpringAiMeetingAgent implements MeetingAgent {
         Prompt prompt = new Prompt(List.of(new SystemMessage(systemPrompt), new UserMessage(meeting.getRawText())), options);
         int llmCalls = 0;
         int toolCalls = 0;
+        List<UsageCall> usages = new ArrayList<>();
 
         while (llmCalls < MAX_LLM_CALLS) {
             ChatResponse response;
@@ -70,37 +77,54 @@ public class SpringAiMeetingAgent implements MeetingAgent {
             try {
                 response = chatModel.call(prompt);
             } catch (Exception exception) {
-                throw failure("LLM_ERROR", llmCalls, toolCalls);
+                usages.add(usage(llmCalls, null));
+                throw failure("LLM_ERROR", llmCalls, toolCalls, usages);
             }
+            usages.add(usage(llmCalls, response));
 
             AssistantMessage assistant = response == null || response.getResult() == null
                     ? null : response.getResult().getOutput();
-            if (assistant == null) throw failure("EMPTY_LLM_RESPONSE", llmCalls, toolCalls);
+            if (assistant == null) throw failure("EMPTY_LLM_RESPONSE", llmCalls, toolCalls, usages);
             if (!assistant.hasToolCalls()) {
                 if (!StringUtils.hasText(assistant.getText()))
-                    throw failure("EMPTY_LLM_RESPONSE", llmCalls, toolCalls);
+                    throw failure("EMPTY_LLM_RESPONSE", llmCalls, toolCalls, usages);
                 return new AgentResult(assistant.getText().trim(), llmCalls, toolCalls,
-                        execution.validationFailureCount(meeting.getId()));
+                        execution.validationFailureCount(meeting.getId()), new UsageReport(usages, null));
             }
 
             int requestedTools = assistant.getToolCalls().size();
             if (toolCalls + requestedTools > MAX_TOOL_CALLS || llmCalls >= MAX_LLM_CALLS)
-                throw failure("TOOL_CALL_LIMIT_EXCEEDED", llmCalls, toolCalls);
+                throw failure("TOOL_CALL_LIMIT_EXCEEDED", llmCalls, toolCalls, usages);
 
             try {
                 ToolExecutionResult toolResult = toolCallingManager.executeToolCalls(prompt, response);
                 toolCalls += requestedTools;
                 prompt = new Prompt(toolResult.conversationHistory(), options);
             } catch (Exception exception) {
-                throw failure("TOOL_EXECUTION_FAILED", llmCalls, toolCalls);
+                throw failure("TOOL_EXECUTION_FAILED", llmCalls, toolCalls, usages);
             }
         }
-        throw failure("TOOL_CALL_LIMIT_EXCEEDED", llmCalls, toolCalls);
+        throw failure("TOOL_CALL_LIMIT_EXCEEDED", llmCalls, toolCalls, usages);
     }
 
-    private MeetingAgentException failure(String code, int llmCalls, int toolCalls) {
-        return new MeetingAgentException(code, llmCalls, toolCalls);
+    private MeetingAgentException failure(String code, int llmCalls, int toolCalls, List<UsageCall> usages) {
+        return new MeetingAgentException(code, llmCalls, toolCalls, new UsageReport(usages, null));
     }
+
+    private UsageCall usage(int order, ChatResponse response) {
+        String model = response != null && response.getMetadata() != null ? response.getMetadata().getModel() : null;
+        Usage usage = response == null || response.getMetadata() == null ? null : response.getMetadata().getUsage();
+        if (usage == null || usage instanceof EmptyUsage)
+            return UsageCall.raw(order, model, null, null, null, null, "unavailable");
+        // DefaultUsage substitutes absent counts with zero; use native OpenAI nullable counts when available.
+        if (usage.getNativeUsage() instanceof OpenAiApi.Usage nativeUsage)
+            return UsageCall.raw(order, model, count(nativeUsage.promptTokens()), count(nativeUsage.completionTokens()),
+                    count(nativeUsage.totalTokens()), null, "tokens");
+        return UsageCall.raw(order, model, count(usage.getPromptTokens()), count(usage.getCompletionTokens()),
+                count(usage.getTotalTokens()), null, "tokens");
+    }
+
+    private Long count(Integer value) { return value == null ? null : value.longValue(); }
 
     private String systemPrompt(LocalDate today) {
         return """

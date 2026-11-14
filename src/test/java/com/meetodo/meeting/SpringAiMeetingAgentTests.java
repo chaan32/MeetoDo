@@ -437,6 +437,77 @@ class SpringAiMeetingAgentTests {
         } catch (Exception exception) { throw new IllegalArgumentException(exception); }
     }
 
+    @Test void recordsUsageForEveryToolLoopResponse() {
+        // 도구 요청 응답과 최종 응답의 사용량을 각각 기록하고 합산한다.
+        var first = toolResponse("findMember", "{\"name\":\"민수\"}");
+        when(model.call(any(Prompt.class))).thenReturn(withUsage(first, 100, 20), withUsage(textResponse("완료"), 50, 10));
+        AgentResult result = agent.process(meetingWithId("민수 업무", 880L));
+        assertThat(result.usageReport().inputTokens()).isEqualTo(150L);
+        assertThat(result.usageReport().outputTokens()).isEqualTo(30L);
+        assertThat(result.usageReport().chatCalls()).extracting(com.meetodo.usage.UsageCall::callOrder).containsExactly(1, 2);
+        assertThat(result.usageReport().chatCalls()).extracting(com.meetodo.usage.UsageCall::model).containsOnly("chat-model");
+    }
+
+    @Test void recordsMissingUsageForFailedAttemptAndKeepsPreviousResponse() {
+        // 후속 LLM 호출 실패 때 앞선 사용량을 보존하고 실패 호출의 미제공 상태도 기록한다.
+        when(model.call(any(Prompt.class))).thenReturn(withUsage(toolResponse("findMember", "{\"name\":\"민수\"}"), 100, 20))
+                .thenThrow(new IllegalStateException("provider message must not escape"));
+        try { agent.process(meetingWithId("민수 업무", 881L)); throw new AssertionError("expected failure"); }
+        catch (MeetingAgentException failure) {
+            assertThat(failure.getLlmCallCount()).isEqualTo(2);
+            assertThat(failure.getUsageReport().inputTokens()).isEqualTo(100L);
+            assertThat(failure.getUsageReport().chatCalls()).hasSize(2);
+            assertThat(failure.getUsageReport().chatCalls().getLast().usageType()).isEqualTo("unavailable");
+            assertThat(failure.getUsageReport().usageStatus()).isEqualTo("PARTIAL");
+        }
+    }
+
+    @Test void emptyUsageIsUnavailableInsteadOfZeroTokens() {
+        // Spring AI 기본 EmptyUsage의 0은 공급자가 보고한 0으로 기록하지 않는다.
+        when(model.call(any(Prompt.class))).thenReturn(textResponse("완료"));
+        var usage = agent.process(meetingWithId("조회할 업무 없음", 882L)).usageReport();
+        assertThat(usage.inputTokens()).isNull();
+        assertThat(usage.chatCalls().getFirst().model()).isNull();
+        assertThat(usage.usageStatus()).isEqualTo("UNAVAILABLE");
+    }
+
+    @Test void explicitlyReportedZeroUsageRemainsAvailable() {
+        // 실제 응답이 보고한 0 토큰은 사용량 미제공과 구분한다.
+        when(model.call(any(Prompt.class))).thenReturn(withUsage(textResponse("완료"), 0, 0));
+        var usage = agent.process(meetingWithId("없음", 883L)).usageReport();
+        assertThat(usage.inputTokens()).isZero();
+        assertThat(usage.usageStatus()).isEqualTo("AVAILABLE");
+    }
+
+    @Test void usageFromEmptyFinalResponseIsKeptOnFailure() {
+        // 빈 최종 답변도 실제 LLM 응답이므로 제공된 사용량을 버리지 않는다.
+        when(model.call(any(Prompt.class))).thenReturn(withUsage(textResponse(""), 10, 2));
+        try { agent.process(meetingWithId("업무", 884L)); throw new AssertionError("expected failure"); }
+        catch (MeetingAgentException failure) {
+            assertThat(failure.getErrorCode()).isEqualTo("EMPTY_LLM_RESPONSE");
+            assertThat(failure.getUsageReport().totalTokens()).isEqualTo(12L);
+        }
+    }
+
+    @Test void nativeNullableUsageDoesNotBecomeReportedZeroThroughDefaultUsage() {
+        // DefaultUsage가 null을0으로 바꿔도 native 응답의 미제공 입력 토큰은 null로 보존한다.
+        var nativeUsage = new org.springframework.ai.openai.api.OpenAiApi.Usage(10, null, 10);
+        var metadata = org.springframework.ai.chat.metadata.ChatResponseMetadata.builder().model("chat-model")
+                .usage(new org.springframework.ai.chat.metadata.DefaultUsage(null, 10, 10, nativeUsage)).build();
+        when(model.call(any(Prompt.class))).thenReturn(new ChatResponse(textResponse("완료").getResults(), metadata));
+        var usage = agent.process(meetingWithId("부분 사용량 보고", 885L)).usageReport();
+        assertThat(usage.inputTokens()).isNull();
+        assertThat(usage.outputTokens()).isEqualTo(10L);
+        assertThat(usage.totalTokens()).isEqualTo(10L);
+        assertThat(usage.usageStatus()).isEqualTo("PARTIAL");
+        assertThat(usage.estimatedCostUsd()).isNull();
+    }
+
+    private ChatResponse withUsage(ChatResponse response, int input, int output) {
+        return new ChatResponse(response.getResults(), org.springframework.ai.chat.metadata.ChatResponseMetadata.builder()
+                .model("chat-model").usage(new org.springframework.ai.chat.metadata.DefaultUsage(input, output)).build());
+    }
+
     private ChatResponse textResponse(String text) {
         return new ChatResponse(List.of(new Generation(new AssistantMessage(text))));
     }

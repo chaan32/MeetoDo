@@ -59,10 +59,14 @@ public class AudioMeetingService {
             if (bytes.length == 0 || bytes.length > MAX_BYTES) throw invalidAudio();
             temporary = Files.createTempFile("meetodo-audio-", "." + extension);
             Files.write(temporary, bytes);
+            TranscriptionResult transcription;
             String transcript;
             String hint = nameHint();
             long started = System.nanoTime();
-            try { transcript = transcriber.transcribe(temporary, hint); }
+            try {
+                transcription = transcriber.transcribeWithUsage(temporary, hint);
+                transcript = transcription.text();
+            }
             catch (RuntimeException failure) { throw transcriptionFailed(); }
             long elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
             Files.deleteIfExists(temporary);
@@ -73,8 +77,8 @@ public class AudioMeetingService {
             transcript = transcript.strip();
             String model = transcriber.model();
             MeetingResponse meeting = beforeSave == null
-                    ? meetings.submitAudio(new MeetingRequest(transcript), model, elapsed)
-                    : meetings.submitAudioFromSlack(new MeetingRequest(transcript), model, elapsed, beforeSave, discardProgress);
+                    ? meetings.submitAudio(new MeetingRequest(transcript), model, elapsed, transcription.usage())
+                    : meetings.submitAudioFromSlack(new MeetingRequest(transcript), model, elapsed, transcription.usage(), beforeSave, discardProgress);
             return new AudioMeetingResponse(transcript, model, elapsed, meeting);
         } catch (IOException failure) {
             throw transcriptionFailed();

@@ -54,6 +54,89 @@ class OpenAiSpeechTranscriberTests {
         server.verify();
     }
 
+    @Test void recordsOfficialTokenUsageWithoutExposingExtraProviderFields() {
+        // 공급자가 실제 반환한 입력·출력·총 토큰만 기록하고 여분 응답 필드는 무시한다.
+        server.expect(anything()).andRespond(withSuccess("""
+                {"text":"회의 결과","new_provider_field":"ignored","usage":{"type":"tokens",
+                "input_tokens":14,"output_tokens":45,"total_tokens":59,
+                "input_token_details":{"audio_tokens":14},"new_usage_field":"ignored"}}
+                """, MediaType.APPLICATION_JSON));
+        var result = transcriber.transcribeWithUsage(file, "Jiyoung");
+        assertThat(result.text()).isEqualTo("회의 결과");
+        assertThat(result.usage().model()).isEqualTo("gpt-transcribe");
+        assertThat(result.usage().usageType()).isEqualTo("tokens");
+        assertThat(result.usage().inputTokens()).isEqualTo(14L);
+        assertThat(result.usage().outputTokens()).isEqualTo(45L);
+        assertThat(result.usage().totalTokens()).isEqualTo(59L);
+        assertThat(result.usage().durationSeconds()).isNull();
+        assertThat(result.usage().estimatedCostUsd()).isNull();
+        server.verify();
+    }
+
+    @Test void recordsOfficialDurationUsageInsteadOfRequestLatency() {
+        // 소요 시간이 아닌 공급자 usage.seconds의 음성 길이를 소수 정밀도로 보존한다.
+        server.expect(anything()).andRespond(withSuccess("""
+                {"text":"회의 결과","usage":{"type":"duration","seconds":27.125}}
+                """, MediaType.APPLICATION_JSON));
+        var usage = transcriber.transcribeWithUsage(file, null).usage();
+        assertThat(usage.usageType()).isEqualTo("duration");
+        assertThat(usage.durationSeconds()).isEqualByComparingTo("27.125");
+        assertThat(usage.inputTokens()).isNull();
+        assertThat(usage.outputTokens()).isNull();
+        server.verify();
+    }
+
+    @Test void missingProviderUsageStaysUnavailableInsteadOfZero() {
+        // usage 미제공을 토큰0이나 파일 크기에서 계산한 사용량으로 바꾸지 않는다.
+        server.expect(anything()).andRespond(withSuccess("{\"text\":\"회의 결과\"}", MediaType.APPLICATION_JSON));
+        var result = transcriber.transcribeWithUsage(file, null);
+        assertThat(result.text()).isEqualTo("회의 결과");
+        assertThat(result.usage().usageType()).isEqualTo("unavailable");
+        assertThat(result.usage().inputTokens()).isNull();
+        assertThat(result.usage().outputTokens()).isNull();
+        assertThat(result.usage().totalTokens()).isNull();
+        assertThat(result.usage().durationSeconds()).isNull();
+        server.verify();
+    }
+
+    @Test void unknownProviderUsageTypeDoesNotGuessUsageOrDiscardTranscript() {
+        // 새로운 usage 형식은 전사문을 유지하면서 알 수 없음으로 기록한다.
+        server.expect(anything()).andRespond(withSuccess("""
+                {"text":"회의 결과","usage":{"type":"future_unit","seconds":5,"total_tokens":8}}
+                """, MediaType.APPLICATION_JSON));
+        var result = transcriber.transcribeWithUsage(file, null);
+        assertThat(result.text()).isEqualTo("회의 결과");
+        assertThat(result.usage().usageType()).isEqualTo("unavailable");
+        assertThat(result.usage().durationSeconds()).isNull();
+        assertThat(result.usage().totalTokens()).isNull();
+        server.verify();
+    }
+
+    @Test void negativeProviderUsageDoesNotBecomeBillableUsage() {
+        // 잘못된 음수 사용량은 비용 계산에 쓰지 않고 전사문만 유지한다.
+        server.expect(anything()).andRespond(withSuccess("""
+                {"text":"회의 결과","usage":{"type":"tokens","input_tokens":-1,"output_tokens":3,"total_tokens":2}}
+                """, MediaType.APPLICATION_JSON));
+        var result = transcriber.transcribeWithUsage(file, null);
+        assertThat(result.text()).isEqualTo("회의 결과");
+        assertThat(result.usage().usageType()).isEqualTo("unavailable");
+        assertThat(result.usage().inputTokens()).isNull();
+        server.verify();
+    }
+
+    @Test void explicitlyReportedZeroTokensRemainReportedUsage() {
+        // 공급자가 명시한0은 미제공과 구분해 기록한다.
+        server.expect(anything()).andRespond(withSuccess("""
+                {"text":"회의 결과","usage":{"type":"tokens","input_tokens":0,"output_tokens":0,"total_tokens":0}}
+                """, MediaType.APPLICATION_JSON));
+        var usage = transcriber.transcribeWithUsage(file, null).usage();
+        assertThat(usage.usageType()).isEqualTo("tokens");
+        assertThat(usage.inputTokens()).isZero();
+        assertThat(usage.outputTokens()).isZero();
+        assertThat(usage.totalTokens()).isZero();
+        server.verify();
+    }
+
     @Test void serverFailureIsSanitizedAndNeverRetried(CapturedOutput output) {
         // 공급자 본문·키·원문을 예외와 로그에 남기지 않고 한 번만 요청한다.
         server.expect(anything()).andRespond(withServerError().body("provider-private-meeting-and-secret"));
