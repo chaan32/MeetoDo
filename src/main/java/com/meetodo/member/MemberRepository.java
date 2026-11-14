@@ -11,6 +11,7 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
     List<Member> findAllByNameOrderByIdAsc(@Param("name") String name);
     List<Member> findAllByGivenNameOrderByIdAsc(String givenName);
     boolean existsBySlackUserId(String slackUserId);
+    boolean existsByActiveTrue();
     boolean existsBySlackUserIdAndIdNot(String slackUserId, Long id);
     java.util.Optional<Member> findBySlackUserId(String slackUserId);
     java.util.Optional<Member> findBySlackUserIdAndActiveTrue(String slackUserId);

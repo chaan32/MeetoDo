@@ -1,0 +1,42 @@
+# Socket Mode uses an app-level connections:write token created separately.
+# No tokens, webhook URLs, or public HTTP callback URLs belong in this file.
+_metadata:
+  major_version: 1
+display_information:
+  name: MeetoDo
+  description: 회의록을 할 일로 정리하고 Slack에서 함께 관리합니다.
+features:
+  bot_user:
+    display_name: MeetoDo
+    always_online: false
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  slash_commands:
+    - command: /meetodo
+      description: 회의록을 입력해 할 일을 정리합니다.
+      usage_hint: 회의록 입력 창 열기
+      should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - commands
+      - im:write
+      - files:read
+      - im:history
+      - app_mentions:read
+settings:
+  socket_mode_enabled: true
+  interactivity:
+    is_enabled: true
+  event_subscriptions:
+    bot_events:
+      - app_home_opened
+      - message.im
+      - app_mention
+  incoming_webhooks:
+    incoming_webhooks_enabled: false
+  org_deploy_enabled: false
+  token_rotation_enabled: false

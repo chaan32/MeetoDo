@@ -49,9 +49,11 @@ public class SlackHomeService {
             if (notice != null && !notice.isBlank()) blocks.add(section(SlackBotRenderer.escape(notice)));
             if (admins.isAdmin(user)) blocks.add(Map.of("type", "actions", "elements", List.of(Map.of(
                     "type", "button", "action_id", MANAGE_MEMBERS_ACTION,
-                    "text", Map.of("type", "plain_text", "text", "팀원 관리"), "value", "members"))));
+                    "text", Map.of("type", "plain_text", "text", "👥 팀원 관리"), "value", "members"))));
             Member member = members.findBySlackUserIdAndActiveTrue(user).orElse(null);
-            if (member == null) blocks.add(section("팀원으로 등록되지 않았어요. 관리자에게 요청해 주세요."));
+            if (member == null) blocks.add(section(admins.isAdmin(user) && !members.existsByActiveTrue()
+                    ? "먼저 팀원을 등록하세요. 팀원 관리에서 본인과 팀원을 추가할 수 있어요."
+                    : "팀원으로 등록되지 않았어요. 관리자에게 요청해 주세요."));
             else renderTasks(blocks, member, user);
             String view = new GsonBuilder().disableHtmlEscaping().create().toJson(Map.of("type", "home", "blocks", blocks));
             var response = client.viewsPublish(ViewsPublishRequest.builder().userId(user).viewAsString(view).build());

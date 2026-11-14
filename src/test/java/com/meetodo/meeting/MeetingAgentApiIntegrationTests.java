@@ -39,6 +39,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles({"local", "openai"})
 @TestPropertySource(properties = {
         "spring.ai.openai.api-key=integration-test-key",
+        "OPENAI_API_KEY=integration-test-key",
         "NOTIFIER_TYPE=none",
         "spring.datasource.url=jdbc:h2:mem:meeting-agent-api-test",
         "spring.jpa.hibernate.ddl-auto=create-drop"

@@ -1,0 +1,32 @@
+MeetoDo's original source is MIT licensed (see LICENSE).
+Dependencies retain their own licenses; the application's MIT license does not
+relicense them. Keep their original copyright, license and NOTICE files when
+redistributing dependencies, the executable JAR, or container images.
+
+Direct dependency metadata checked from the resolved Gradle artifacts:
+- Spring Boot 3.5.16, Spring AI 1.1.8, springdoc 2.8.17, Flyway: Apache-2.0.
+- PostgreSQL JDBC: BSD-2-Clause. H2: MPL-2.0 / EPL-1.0 (dual license metadata).
+- Slack Java SDK 1.54.0: published slack-sdk-parent:1.54.0 POM declares
+  Apache-2.0. The current upstream repository displays MIT; the exact tag's
+  license text was not available during this check. Preserve the artifact's
+  notices and verify the version-specific upstream license before redistribution.
+- javax.websocket-api 1.1: POM copyright/license header offers CDDL-1.1 or
+  GPL-2.0 with the Classpath Exception. This is not MIT licensed.
+- Tyrus standalone client 1.20: its actual JAR includes META-INF/LICENSE.txt
+  containing EPL-2.0; parent POM offers EPL-2.0 OR GPL-2.0 with Classpath Exception.
+- Test dependencies also keep their licenses (JUnit uses EPL-2.0; these are not
+  included in the production bootJar).
+
+This is a limited metadata check of direct dependencies, not a complete
+transitive-dependency or container operating-system license audit. No dependency
+code was modified. Non-MIT or dual-license components do not become MIT through
+this application's LICENSE. Their own distribution requirements still apply.
+
+Primary references:
+https://www.apache.org/licenses/LICENSE-2.0
+https://github.com/slackapi/java-slack-sdk
+https://github.com/eclipse-ee4j/tyrus
+https://javaee.github.io/websocket-spec/
+https://www.eclipse.org/legal/epl-2.0/
+https://jdbc.postgresql.org/about/license/
+https://www.h2database.com/html/license.html

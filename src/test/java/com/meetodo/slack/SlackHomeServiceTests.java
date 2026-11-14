@@ -68,6 +68,30 @@ class SlackHomeServiceTests {
         // 아직 팀원으로 등록하지 않은 관리자도 본인을 등록할 관리 버튼을 본다.
         home.publish("UADMIN"); assertThat(published().getViewAsString()).contains("meetodo_manage_members");
     }
+    @Test void emptyTeamAdminGetsFirstMemberGuidanceAndManagementButton() throws Exception {
+        // 활성 팀원이 없으면 미등록 관리자에게 첫 팀원 등록 안내와 관리 진입을 제공한다.
+        when(members.existsByActiveTrue()).thenReturn(false);
+        home.publish("UADMIN");
+        assertThat(published().getViewAsString()).contains("먼저 팀원을 등록하세요", "👥 팀원 관리", "meetodo_manage_members")
+                .doesNotContain("관리자에게 요청해 주세요", "미완료 할 일이 없어요");
+        verifyNoInteractions(tasks);
+    }
+    @Test void emptyTeamNonAdminKeepsRegistrationNoticeWithoutManagementButton() throws Exception {
+        // 빈 팀이어도 일반 사용자에게 관리자용 첫 등록 동작을 노출하지 않는다.
+        when(members.existsByActiveTrue()).thenReturn(false);
+        home.publish("UUNKNOWN");
+        assertThat(published().getViewAsString()).contains("팀원으로 등록되지 않았어요. 관리자에게 요청해 주세요.")
+                .doesNotContain("먼저 팀원을 등록하세요", "meetodo_manage_members");
+        verifyNoInteractions(tasks);
+    }
+    @Test void nonemptyTeamUnregisteredAdminKeepsExistingRegistrationNotice() throws Exception {
+        // 활성 팀원이 있으면 미등록 관리자도 기존 등록 안내와 관리 버튼을 함께 본다.
+        when(members.existsByActiveTrue()).thenReturn(true);
+        home.publish("UADMIN");
+        assertThat(published().getViewAsString()).contains("팀원으로 등록되지 않았어요", "meetodo_manage_members")
+                .doesNotContain("먼저 팀원을 등록하세요");
+        verifyNoInteractions(tasks);
+    }
     @Test void viewNeverExceedsHundredBlocksAndCountsOmittedTasks() throws Exception {
         // Home의 100블록 제한을 넘기지 않으며 생략한 업무 수를 API 안내와 함께 표시한다.
         List<Task> many = new ArrayList<>(); for(int i=1;i<=100;i++) many.add(task(i,"업무"+i,owner,null));

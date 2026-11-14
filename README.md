@@ -523,3 +523,13 @@ V10은 Meeting의 입력 DM 좌표(slack_input_channel_id/message_ts)를 nullabl
 한계: DB와 Slack 게시/삭제/DM 안내는 원자적이지 않다. Slack 삭제·갱신이 실패하면 임시 메시지나 오래된 안내가 남을 수 있으며 자동 재시도하지 않는다. 팀 결과 게시가 성공해도 DM 링크 조회/갱신 실패는 팀 결과·회의를 되돌리지 않고 고정 코드로 기록한다. 새 정책의 실제 Slack 확인은 사용자 수행 전이다.
 
 DM→팀 채널 정책 자동 검증: `./gradlew test bootJar --no-daemon` 성공, **1,059개 / 실패·오류·건너뜀0**. 변경 전 DM 음성 동작은 사용자 실제 확인 완료이며, 새 팀 채널 전달 정책은 실제 확인 전이다.
+
+## 셀프 호스팅 기반
+
+MeetoDo 자체 소스는 [MIT LICENSE](LICENSE), Copyright (c) 2026 전해찬이다. 의존성은 각자의 라이선스/고지를 유지하며 [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt)에 직접 의존성 확인 범위와 WebSocket/EPL/CDDL·Slack SDK 메타데이터 불일치를 기록했다. 모든 전이 의존성·컨테이너 배포물의 법률 감사를 마쳤다는 뜻은 아니다.
+
+[slack-app-manifest.yml](slack-app-manifest.yml)은 Socket Mode·Interactivity·Home·입력 가능한 Messages 탭·/meetodo와 실제 사용하는 봇 권한/이벤트를 선언한다. 봇은 Web API로 게시·수정·삭제하므로 incoming-webhook 권한을 넣지 않는다. 기존 웹훅 전송 모드는 별도로 유지한다. 앱 레벨 connections:write 토큰은 매니페스트에 비밀값을 넣지 않고 Slack 앱에서 직접 발급한다. 공식 근거: [manifest](https://docs.slack.dev/reference/app-manifest/), [Socket Mode](https://docs.slack.dev/apis/events-api/using-socket-mode/).
+
+Docker에는 개발 샘플 팀원이 없다. MEETODO_ADMIN_SLACK_IDS 사용자는 팀원이 아니어도 앱 Home의 👥 팀원 관리로 본인부터 등록할 수 있다. 활성 팀원이0명이면 먼저 등록하라는 안내를 표시한다. 빈 팀의 회의 담당자는 등록되지 않은 담당자(NOT_FOUND)로 남긴다.
+
+명시적 slack-bot 모드에서 SLACK_BOT_TOKEN/SLACK_APP_TOKEN/SLACK_CHANNEL_ID, openai 프로필에서 OPENAI_API_KEY가 빠지면 SDK 빈을 만들기 전에 누락 이름만 알리고 종료한다. 값은 출력하지 않는다. 기본/local 키 없는 개발과 test 프로필은 유지한다. .env.example은 값을 비우고 필수·선택·기본값을 설명한다. Docker Compose는 .env를 읽지만 직접 bootRun은 자동으로 읽지 않는다.
