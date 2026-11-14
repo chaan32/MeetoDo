@@ -61,6 +61,8 @@ public class QuestionService {
         List<Source> sources=List.of(); List<CurrentTask> current=List.of();
         List<RetrievedDocument> retrieved=List.of(); List<UsageCall> chats=new ArrayList<>();
         UsageReport embedding;
+        String modelOutput=null;
+        List<RagSourceSnapshot> canonical=new ArrayList<>();
         try (var capture=collector.open()) {
             try {
                 RagIndexStatus state=indexer.status();
@@ -68,7 +70,6 @@ public class QuestionService {
                 else if (state.eligible()==0) { result=QuestionStatus.NOT_FOUND; answer="기록에 없습니다"; }
                 else {
                     List<Document> hits=retriever.retrieve(question,diagnostic);
-                    List<RagSourceSnapshot> canonical=new ArrayList<>();
                     List<RetrievedDocument> scores=new ArrayList<>();
                     for (Document hit:hits) {
                         RagSourceSnapshot source=canonical(hit);
@@ -85,7 +86,11 @@ public class QuestionService {
                         chats.add(usage(response));
                         String content=response == null || response.getResult()==null || response.getResult().getOutput()==null
                                 ? null : response.getResult().getOutput().getText();
+                        modelOutput=content;
                         List<EvidenceVerifier.Evidence> evidence=verifier.verify(content,canonical);
+                        List<EvidenceVerifier.Check> checks=new ArrayList<>();
+                        for (int i=0;i<evidence.size();i++) checks.add(new EvidenceVerifier.Check(i,evidence.get(i).documentId(),"OK"));
+                        row.recordVerification(write(VerificationDiagnostics.capture(null,null,checks,List.of(),json)));
                         if (evidence.isEmpty()) { result=QuestionStatus.NOT_FOUND; answer="기록에 없습니다"; }
                         else {
                             sources=evidence.stream().map(item -> source(item,canonical)).toList();
@@ -97,6 +102,9 @@ public class QuestionService {
                     }
                 }
             } catch (EvidenceVerifier.InvalidEvidence invalidEvidence) {
+                List<Long> ids=canonical.stream().map(RagSourceSnapshot::meetingId).distinct().toList();
+                List<String> transcripts=tx.execute(status -> meetings.findAllById(ids).stream().map(meeting -> meeting.getRawText()).toList());
+                row.recordVerification(write(VerificationDiagnostics.capture(invalidEvidence.getMessage(),modelOutput,invalidEvidence.checks(),transcripts,json)));
                 result=QuestionStatus.UNVERIFIED; answer="기록에서 확인되지 않음"; sources=List.of(); current=List.of();
             } catch (RuntimeException failure) {
                 result=QuestionStatus.FAILED; answer="질문 처리에 실패했습니다. 잠시 후 다시 시도하세요."; sources=List.of(); current=List.of();

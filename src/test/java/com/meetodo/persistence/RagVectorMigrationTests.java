@@ -97,6 +97,27 @@ class RagVectorMigrationTests {
         assertThat(jdbc.queryForObject("SELECT content FROM rag_vector_store WHERE id=?::uuid", String.class, id)).isEqualTo("결제 명세 최신본");
     }
 
+    @Test void upgradeFromV16KeepsOldQuestionsWithoutInventingDiagnostics() {
+        // V16 질문 행·사용량을 보존하고 새 진단은 null로 남긴다.
+        String schema="rag_v16_diagnostics_upgrade";
+        Flyway.configure().dataSource(POSTGRES.getJdbcUrl(),POSTGRES.getUsername(),POSTGRES.getPassword())
+                .schemas(schema).target("16").load().migrate();
+        jdbc.update("INSERT INTO rag_v16_diagnostics_upgrade.rag_questions(id,question,actor_slack_id,status,answer,sources,current_tasks,retrieved_documents,llm_call_count,embedding_call_count,processing_time_ms,created_at) VALUES (41,'보존할 질문','UOLD','UNVERIFIED','기록에서 확인되지 않음','[]','[]','[]',1,1,123,now())");
+        var migration=Flyway.configure().dataSource(POSTGRES.getJdbcUrl(),POSTGRES.getUsername(),POSTGRES.getPassword()).schemas(schema).target("17").load();
+        assertThat(migration.migrate().migrationsExecuted).isEqualTo(1);
+        assertThat(migration.migrate().migrationsExecuted).isZero();
+        assertThat(jdbc.queryForMap("SELECT question,llm_call_count,verification_diagnostics FROM rag_v16_diagnostics_upgrade.rag_questions WHERE id=41"))
+                .containsEntry("question","보존할 질문").containsEntry("llm_call_count",1).containsEntry("verification_diagnostics",null);
+    }
+
+    @Test void verificationDiagnosticsRoundTripsAsPostgresText() {
+        // 진단 JSON은 PostgreSQL OID가 아닌 text로 그대로 저장·조회한다.
+        String value="{\"reason\":\"NOT_JSON\",\"modelOutput\":\"[REDACTED]\",\"checks\":[]}";
+        jdbc.update("INSERT INTO rag_questions(id,question,actor_slack_id,status,sources,current_tasks,retrieved_documents,llm_call_count,embedding_call_count,processing_time_ms,created_at,verification_diagnostics) VALUES (4041,'진단 저장','UADMIN','UNVERIFIED','[]','[]','[]',1,1,1,now(),?)",value);
+        assertThat(jdbc.queryForObject("SELECT verification_diagnostics FROM rag_questions WHERE id=4041",String.class)).isEqualTo(value);
+        assertThat(jdbc.queryForObject("SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='rag_questions' AND column_name='verification_diagnostics'",String.class)).isEqualTo("text");
+    }
+
     private boolean vectorTableExists() {
         return jdbc.queryForObject("SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='rag_vector_store'", Integer.class) == 1;
     }

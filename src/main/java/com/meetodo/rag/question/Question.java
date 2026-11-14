@@ -19,6 +19,7 @@ public class Question {
     @Column(name="embedding_call_count",nullable=false) private int embeddingCallCount;
     @Column(name="processing_time_ms",nullable=false) private long processingTimeMs;
     @Column(name="created_at",nullable=false) private Instant createdAt;
+    @Column(name="verification_diagnostics",columnDefinition="text") private String verificationDiagnostics;
     @Column(name="completed_at") private Instant completedAt;
     protected Question() { }
     Question(String question,String actorSlackId,Instant at) {
@@ -29,6 +30,8 @@ public class Question {
         retrievedDocuments=retrieved; usageReport=response.usage(); llmCallCount=response.llmCallCount();
         embeddingCallCount=response.embeddingCallCount(); processingTimeMs=response.processingTimeMs(); completedAt=at;
     }
+    void recordVerification(String value) { verificationDiagnostics=value; }
+    public String getVerificationDiagnostics() { return verificationDiagnostics; }
     public Long getId() { return id; }
     public String getQuestion() { return question; }
     public String getActorSlackId() { return actorSlackId; }

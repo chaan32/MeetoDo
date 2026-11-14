@@ -5,6 +5,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import static org.assertj.core.api.Assertions.assertThat;
 class RagDevProfileTests {
  ApplicationContextRunner context=new ApplicationContextRunner().withUserConfiguration(RagDevController.class)
+  .withBean(com.fasterxml.jackson.databind.ObjectMapper.class,com.fasterxml.jackson.databind.ObjectMapper::new)
   .withBean(AdminAuthorization.class,()->new AdminAuthorization("UADMIN")).withBean(RagReindexJobs.class,RagReindexJobs::new);
  @Test void localExposesDevEndpoints() {
   // local 개발 환경은 별도 플래그 없이 노출한다.

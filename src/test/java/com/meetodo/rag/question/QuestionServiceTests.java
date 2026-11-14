@@ -143,4 +143,58 @@ class QuestionServiceTests {
   assertThat(service.ask("질문","U1",false).currentTasks()).isEmpty();
  }
 
+ @Test void rejectionPersistsMaskedDiagnosticsButNormalResponseStaysSafe() throws Exception {
+  // 거절 이유와 안전한 출력은 DB에만 남기고 일반 응답에는 내보내지 않는다.
+  String token="xox"+"b-"+"test-secret-12345";
+  when(client.answer(anyString(),anyList())).thenReturn(response("```json\n"+token+"\n```"));
+  var result=service.ask("질문","U1",false);
+  var saved=org.mockito.ArgumentCaptor.forClass(Question.class);
+  verify(questions,times(2)).saveAndFlush(saved.capture());
+  String diagnostic=(String)org.springframework.test.util.ReflectionTestUtils.getField(saved.getValue(),"verificationDiagnostics");
+  assertThat(diagnostic).isNotNull().doesNotContain(token);
+  assertThat(new ObjectMapper().readTree(diagnostic).path("reason").asText()).isEqualTo("TRAILING_CONTENT");
+  assertThat(new ObjectMapper().writeValueAsString(result)).doesNotContain("modelOutput",token,"TRAILING_CONTENT");
+  assertThat(result.answer()).isEqualTo("기록에서 확인되지 않음");
+ }
+ @Test void validEvidenceAlsoRecordsOkChecksWithoutModelOutput() throws Exception {
+  // 부분 근거 정책 판단용 OK 집계에는 정상 응답도 포함하되 원출력은 저장하지 않는다.
+  service.ask("질문","U1",false);
+  var saved=org.mockito.ArgumentCaptor.forClass(Question.class);
+  verify(questions,times(2)).saveAndFlush(saved.capture());
+  String value=(String)org.springframework.test.util.ReflectionTestUtils.getField(saved.getValue(),"verificationDiagnostics");
+  var diagnostic=new ObjectMapper().readTree(value);
+  assertThat(diagnostic.path("checks").get(0).path("reason").asText()).isEqualTo("OK");
+  assertThat(diagnostic.path("modelOutput").isNull()).isTrue();
+ }
+ @Test void savedOutputIsRedactedBeforeFourThousandCharacterLimit() throws Exception {
+  // 길이 경계에 걸친 비밀값도 먼저 전체 마스킹한 뒤 자른다.
+  String token="sk"+"-"+"secret-test-value-12345";
+  when(client.answer(anyString(),anyList())).thenReturn(response("z".repeat(3990)+token+" "+"x".repeat(1000)));
+  service.ask("질문","U1",false);
+  var saved=org.mockito.ArgumentCaptor.forClass(Question.class); verify(questions,times(2)).saveAndFlush(saved.capture());
+  var diagnostic=new ObjectMapper().readTree((String)org.springframework.test.util.ReflectionTestUtils.getField(saved.getValue(),"verificationDiagnostics"));
+  assertThat(diagnostic.path("modelOutput").asText()).hasSizeLessThanOrEqualTo(4000).doesNotContain("secret-test",token);
+  assertThat(diagnostic.path("outputTruncated").asBoolean()).isTrue();
+ }
+ @Test void fullTranscriptAndJsonEscapedTranscriptAreNotPersisted() throws Exception {
+  // JSON 문자열 안의 회의록 원문 전체도 마스킹한다.
+  String transcript="보존하면 안 되는 회의록\n둘째 줄";
+  var meeting=com.meetodo.meeting.Meeting.create(transcript,com.meetodo.meeting.MeetingSource.API_TEXT);
+  when(meetings.findAllById(any())).thenReturn(List.of(meeting));
+  String output="{\"found\":true,\"evidence\":[{\"documentId\":\"other\",\"meetingId\":1,\"quote\":"+new ObjectMapper().writeValueAsString(transcript)+"}]}";
+  when(client.answer(anyString(),anyList())).thenReturn(response(output));
+  service.ask("질문","U1",false);
+  var saved=org.mockito.ArgumentCaptor.forClass(Question.class); verify(questions,times(2)).saveAndFlush(saved.capture());
+  String value=(String)org.springframework.test.util.ReflectionTestUtils.getField(saved.getValue(),"verificationDiagnostics");
+  assertThat(value).doesNotContain("보존하면 안 되는 회의록","둘째 줄");
+ }
+ @Test void diagnosticDocumentIdsAreAlsoMasked() throws Exception {
+  // 출처 밖 documentId에 들어간 토큰도 항목 진단에 남기지 않는다.
+  String token="xapp"+"-"+"test-id-secret";
+  when(client.answer(anyString(),anyList())).thenReturn(response("{\"found\":true,\"evidence\":[{\"documentId\":\""+token+"\",\"meetingId\":1,\"quote\":\"문서\"}]}"));
+  service.ask("질문","U1",false);
+  var saved=org.mockito.ArgumentCaptor.forClass(Question.class); verify(questions,times(2)).saveAndFlush(saved.capture());
+  String value=(String)org.springframework.test.util.ReflectionTestUtils.getField(saved.getValue(),"verificationDiagnostics");
+  assertThat(value).doesNotContain(token);
+ }
 }

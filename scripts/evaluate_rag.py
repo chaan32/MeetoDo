@@ -242,6 +242,8 @@ def markdown(rows, mode):
     columns = ['id', 'label', 'status', 'error']
     if mode == 'evaluate':
         columns += ['correct', 'citationCorrect', 'notFoundCorrect', 'manualCheck', 'factPrecision', 'factRecall']
+    if any('verificationDiagnostics' in row for row in rows):
+        columns += ['verificationReason', 'diagnosticError']
     columns += ['processingTimeMs', 'httpElapsedMs', 'llmCallCount', 'embeddingCallCount', 'usage']
     def cell(value):
         if value is None: return 'missing'
@@ -259,10 +261,32 @@ def markdown(rows, mode):
         lines += ['', 'Machine correctness requires all current Task facts plus meeting-bound retrieved citations. '
                   'MEETING-only prose needs manual checking and fails machine grading. '
                   'NOT_FOUND is correct only for NONE gold; UNVERIFIED is never correct.']
+    if any('verificationDiagnostics' in row for row in rows):
+        summary = summarize_diagnostics(rows)
+        lines += ['', 'Verification diagnostics (first rejection; original verdict unchanged):', '',
+                  '| topLevelReason | questions |', '| --- | --- |']
+        lines += [f'| {reason} | {count} |' for reason, count in summary['topLevelReasons'].items()]
+        lines += ['', f"Questions with any OK evidence: {summary['questionsWithAnyOk']}",
+                  f"UNVERIFIED questions with any OK evidence: {summary['rejectedQuestionsWithAnyOk']}",
+                  f"Collected: {summary['collectedQuestions']}; missing: {summary['missingDiagnostics']}; not applicable (no model call): {summary['notApplicableQuestions']}"]
     return '\n'.join(lines) + '\n'
 
 
-def evaluate(api, manifest, mode, output_dir):
+def summarize_diagnostics(rows):
+    collected = [row for row in rows if isinstance(row.get('verificationDiagnostics'), dict)]
+    reasons = Counter(row['verificationDiagnostics'].get('reason') for row in collected
+                      if row['verificationDiagnostics'].get('reason'))
+    with_ok = [row for row in collected if any(check.get('reason') == 'OK'
+               for check in row['verificationDiagnostics'].get('checks', []))]
+    not_applicable = sum(row.get('verificationDiagnostics') is None and row.get('llmCallCount') == 0
+                         and not row.get('diagnosticError') for row in rows)
+    return dict(topLevelReasons=dict(sorted(reasons.items())), questionsWithAnyOk=len(with_ok),
+                rejectedQuestionsWithAnyOk=sum(row.get('status') == 'UNVERIFIED' for row in with_ok),
+                collectedQuestions=len(collected), missingDiagnostics=len(rows)-len(collected)-not_applicable,
+                notApplicableQuestions=not_applicable)
+
+
+def evaluate(api, manifest, mode, output_dir, include_diagnostics=False):
     questions = build_questions(manifest)
     output_dir = external_path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -291,10 +315,28 @@ def evaluate(api, manifest, mode, output_dir):
             row = dict(question, status='HTTP_ERROR', error=str(failure),
                        httpElapsedMs=round((time.monotonic()-started)*1000,3), **metrics({}))
             if mode == 'evaluate': row.update(grade(question, {}))
+        if include_diagnostics:
+            row['verificationDiagnostics'] = None
+            identity = response.get('questionId') if isinstance(response, dict) else None
+            if not isinstance(identity, int) or isinstance(identity, bool) or identity <= 0:
+                row['diagnosticError'] = 'QUESTION_ID_UNAVAILABLE'
+            else:
+                try:
+                    diagnostic = api.request('GET', '/api/dev/rag/questions/' + str(identity) + '/diagnostics', admin=True)
+                    value = diagnostic.get('diagnostics') if isinstance(diagnostic, dict) else None
+                    if not isinstance(diagnostic, dict) or diagnostic.get('questionId') != identity or (
+                            value is not None and (not isinstance(value, dict) or not isinstance(value.get('checks'), list)
+                            or any(not isinstance(check, dict) for check in value['checks']))):
+                        raise EvaluationError('INVALID_DIAGNOSTIC_RESPONSE')
+                    row['verificationDiagnostics'] = value
+                    row['verificationReason'] = value.get('reason') if value else None
+                except EvaluationError as failure:
+                    row['diagnosticError'] = str(failure)
         # One request per question, including failures: retries distort call/cost counts.
         save_json(output_dir / (question['id'] + '.json'), {'question':question, 'response':response, 'result':row})
         rows.append(row)
-        save_json(output_dir / 'results.json', {'mode':mode, 'results':rows})
+        save_json(output_dir / 'results.json', {'mode':mode, 'results':rows,
+                  **({'diagnosticSummary':summarize_diagnostics(rows)} if include_diagnostics else {})})
         (output_dir / 'results.md').write_text(markdown(rows, mode), encoding='utf-8')
     print(markdown(rows, mode))
     return rows
@@ -309,6 +351,7 @@ def main(argv=None):
     parser.add_argument('--output-dir', type=Path, default=DEFAULT_DIR)
     parser.add_argument('--prepare', action='store_true', help='Create four fixtures ONLY in an empty dedicated database')
     parser.add_argument('--member-ids', help='Exactly three active member IDs, e.g. 1,2,4')
+    parser.add_argument('--include-diagnostics', action='store_true', help='Fetch persisted verification diagnostics with admin identity; no additional model call')
     parser.add_argument('--mode', choices=('scores','evaluate'), default='scores')
     args = parser.parse_args(argv)
     try:
@@ -333,9 +376,9 @@ def main(argv=None):
         if not any(m.get('active') is True and m.get('slackUserId') == args.actor for m in members):
             raise EvaluationError('ACTIVE_ACTOR_REQUIRED')
         run_dir = output_dir / (args.mode + '-' + datetime.now(ZoneInfo('Asia/Seoul')).strftime('%Y%m%dT%H%M%S%f'))
-        rows = evaluate(api, manifest, args.mode, run_dir)
+        rows = evaluate(api, manifest, args.mode, run_dir, include_diagnostics=args.include_diagnostics)
         print('Saved results:', run_dir)
-        return 1 if any(row.get('error') for row in rows) else 0
+        return 1 if any(row.get('error') or row.get('diagnosticError') for row in rows) else 0
     except EvaluationError as failure:
         print('Evaluation stopped:', str(failure), file=sys.stderr)
         return 1

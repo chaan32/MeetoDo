@@ -24,6 +24,7 @@ import static org.mockito.Mockito.*;
 
 @SpringBootTest(properties={"spring.datasource.url=jdbc:h2:mem:rag-question-persist;DB_CLOSE_DELAY=-1", "MEETODO_RAG_ENABLED=true"})
 @ActiveProfiles("test")
+@org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
 class QuestionPersistenceIntegrationTests {
     @Autowired QuestionService service;
     @Autowired QuestionRepository questions;
@@ -76,5 +77,28 @@ class QuestionPersistenceIntegrationTests {
         assertThat(result.sources()).singleElement().satisfies(source -> assertThat(source.quote()).isNull());
         assertThat(questions.findById(result.questionId())).isPresent();
         assertThat(tasks.count()).isEqualTo(1);
+    }
+    @Test void rejectionStoresAllItemChecksAndNeverLogsRawOutput(org.springframework.boot.test.system.CapturedOutput captured) throws Exception {
+        // 실제 H2 저장에서도 첫 거절 뒤 OK 결과를 보존하고 원출력은 애플리케이션 로그에 남기지 않는다.
+        members.saveAndFlush(new Member("전","테스트","개발","UDIAGPERSIST"));
+        var meeting=Meeting.create("진단 저장 확인용 회의 원문입니다.",MeetingSource.API_TEXT);
+        meeting.startProcessing(Instant.EPOCH); meeting.complete("완료",Instant.EPOCH.plusSeconds(1),1,0,0); meetings.saveAndFlush(meeting);
+        Document doc=documents.forMeeting(meeting.getId()).stream().filter(d->"MEETING".equals(d.getMetadata().get("kind"))).findFirst().orElseThrow();
+        when(indexer.status()).thenReturn(new RagIndexStatus(1,1,0,0,documents.namespace()));
+        when(retriever.retrieve(anyString(),eq(false))).thenReturn(List.of(doc));
+        String token="xox"+"b-"+"diagnostic-private-token";
+        String output=json.writeValueAsString(Map.of("found",true,"evidence",List.of(
+                Map.of("documentId",token,"meetingId",meeting.getId(),"quote","틀린 문서"),
+                Map.of("documentId",doc.getId(),"meetingId",meeting.getId(),"quote",doc.getText()))));
+        when(client.answer(anyString(),anyList())).thenReturn(new ChatResponse(List.of(new Generation(new AssistantMessage(output)))));
+        var result=service.ask("기록은?","UDIAGPERSIST",false);
+        var persisted=questions.findById(result.questionId()).orElseThrow();
+        var diagnostic=json.readTree(persisted.getVerificationDiagnostics());
+        assertThat(result.status()).isEqualTo(QuestionStatus.UNVERIFIED);
+        assertThat(result.sources()).isEmpty();
+        assertThat(diagnostic.path("reason").asText()).isEqualTo("UNKNOWN_DOCUMENT");
+        assertThat(diagnostic.path("checks").get(1).path("reason").asText()).isEqualTo("OK");
+        assertThat(persisted.getVerificationDiagnostics()).doesNotContain(token,meeting.getRawText());
+        assertThat(captured.getAll()).doesNotContain(token,output,meeting.getRawText());
     }
 }

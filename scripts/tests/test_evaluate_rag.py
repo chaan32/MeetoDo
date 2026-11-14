@@ -267,4 +267,63 @@ class EvaluatorTests(unittest.TestCase):
         with self.assertRaises(rag.EvaluationError): rag.validate_base_url('http://localhost:invalid')
 
 
+
+
+class DiagnosticEvaluationTests(unittest.TestCase):
+    def setUp(self):
+        # Keep offline evaluator output bounded inside Gradle.
+        import contextlib, io
+        self.output=contextlib.redirect_stdout(io.StringIO()); self.output.__enter__()
+        self.addCleanup(self.output.__exit__,None,None,None)
+    def test_include_diagnostics_uses_admin_get_without_second_question(self):
+        # Diagnostics read persisted results and never repeat the answer request.
+        class DiagnosticApi(FakeApi):
+            def request(self, method, path, body=None, admin=False):
+                if '/questions/' in path and path.endswith('/diagnostics'):
+                    self.calls.append((method,path,body,admin))
+                    return {'questionId':7,'diagnostics':{'reason':'QUOTE_NOT_IN_SOURCE','checks':[{'index':0,'reason':'OK'}]}}
+                result=super().request(method,path,body,admin)
+                if path=='/api/questions': result['questionId']=7
+                return result
+        with tempfile.TemporaryDirectory() as d:
+            api=DiagnosticApi(); rows=rag.evaluate(api,fixtures(),'evaluate',Path(d),include_diagnostics=True)
+            reads=[c for c in api.calls if c[1].endswith('/diagnostics')]
+            self.assertEqual(10,len(reads)); self.assertTrue(all(c[0]=='GET' and c[3] for c in reads))
+            self.assertEqual(10,len([c for c in api.calls if c[1]=='/api/questions']))
+            self.assertEqual('QUOTE_NOT_IN_SOURCE',rows[0]['verificationDiagnostics']['reason'])
+    def test_diagnostic_read_failure_keeps_answer_and_marks_missing(self):
+        # Admin diagnostic errors must not rewrite the measured answer status.
+        class FailingDiagnostics(FakeApi):
+            def request(self, method, path, body=None, admin=False):
+                if path.endswith('/diagnostics'): raise rag.EvaluationError('HTTP_403')
+                result=super().request(method,path,body,admin)
+                if path=='/api/questions': result['questionId']=7
+                return result
+        with tempfile.TemporaryDirectory() as d:
+            rows=rag.evaluate(FailingDiagnostics(),fixtures(),'evaluate',Path(d),include_diagnostics=True)
+            self.assertEqual('ANSWERED',rows[0]['status'])
+            self.assertEqual('HTTP_403',rows[0]['diagnosticError'])
+            self.assertIsNone(rows[0]['verificationDiagnostics'])
+    def test_aggregate_counts_first_reasons_and_any_ok_questions(self):
+        # A question counts once even when multiple evidence items pass.
+        rows=[{'status':'UNVERIFIED','verificationDiagnostics':{'reason':'QUOTE_NOT_IN_SOURCE','checks':[{'reason':'OK'},{'reason':'OK'}]}},
+              {'status':'UNVERIFIED','verificationDiagnostics':{'reason':'NOT_JSON','checks':[]}},
+              {'status':'ANSWERED','verificationDiagnostics':{'reason':None,'checks':[{'reason':'OK'}]}}]
+        summary=rag.summarize_diagnostics(rows)
+        self.assertEqual({'QUOTE_NOT_IN_SOURCE':1,'NOT_JSON':1},summary['topLevelReasons'])
+        self.assertEqual(2,summary['questionsWithAnyOk'])
+        self.assertEqual(1,summary['rejectedQuestionsWithAnyOk'])
+    def test_missing_old_diagnostics_are_not_treated_as_zero_ok(self):
+        # Previous runs lack saved output; absence cannot prove every item failed.
+        summary=rag.summarize_diagnostics([{'status':'UNVERIFIED','verificationDiagnostics':None}])
+        self.assertEqual(1,summary['missingDiagnostics'])
+        self.assertEqual(0,summary['collectedQuestions'])
+
+class DiagnosticApplicabilityTests(unittest.TestCase):
+    def test_no_answer_call_is_not_missing_verification(self):
+        # No-hit questions intentionally have no model-output verification record.
+        result=rag.summarize_diagnostics([{'status':'NOT_FOUND','llmCallCount':0,'verificationDiagnostics':None}])
+        self.assertEqual(0,result['missingDiagnostics'])
+        self.assertEqual(1,result['notApplicableQuestions'])
+
 if __name__ == '__main__': unittest.main()
