@@ -226,6 +226,22 @@ class SlackHomeServiceTests {
         when(client.viewsPublish(any(ViewsPublishRequest.class))).thenReturn(response); home.publish("U1");
         assertThat(output.getAll()).doesNotContain("provider secret body");
     }
+    @Test void unregisteredApplicantSeesSelfRegistrationButton() throws Exception {
+        // 등록 서비스가 연결되면 일반 미등록 사용자가 직접 신청할 수 있다.
+        var registration = mock(com.meetodo.member.registration.MemberRegistrationService.class);
+        home.setRegistration(registration); home.publish("UUNKNOWN");
+        assertThat(published().getViewAsString()).contains("meetodo_request_membership", "내 정보 등록");
+        verifyNoInteractions(tasks);
+    }
+    @Test void pendingApplicantSeesWaitingNoticeWithoutAnotherRequestButton() throws Exception {
+        // 대기 신청이 있으면 중복 신청 버튼 대신 상태를 보여 준다.
+        var registration = mock(com.meetodo.member.registration.MemberRegistrationService.class);
+        when(registration.pending("UUNKNOWN")).thenReturn(Optional.of(new com.meetodo.member.registration.RegistrationView(
+                7L,"UUNKNOWN","김","민수","개발",com.meetodo.member.registration.RegistrationStatus.PENDING,null,null,false,null)));
+        home.setRegistration(registration); home.publish("UUNKNOWN");
+        assertThat(published().getViewAsString()).contains("승인 대기 중").doesNotContain("meetodo_request_membership");
+        verifyNoInteractions(tasks);
+    }
     private ViewsPublishRequest published() throws Exception {
         ArgumentCaptor<ViewsPublishRequest> request=ArgumentCaptor.forClass(ViewsPublishRequest.class);
         verify(client,atLeastOnce()).viewsPublish(request.capture()); return request.getValue();

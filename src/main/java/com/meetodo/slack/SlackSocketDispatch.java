@@ -37,7 +37,10 @@ final class SlackSocketDispatch {
         if (actions == null || actions.isEmpty()) return false;
         var first = actions.getFirst();
         if ("meetodo_manage_members".equals(first.getActionId()) || "meetodo_member_new".equals(first.getActionId())
-                || "meetodo_member_select".equals(first.getActionId())) return true;
+                || "meetodo_member_select".equals(first.getActionId())
+                || SlackMemberRegistrationService.REQUEST.equals(first.getActionId())
+                || SlackMemberRegistrationService.EDIT.equals(first.getActionId())
+                || SlackMemberRegistrationService.REJECT.equals(first.getActionId())) return true;
         if (!SlackBotRenderer.TASK_MENU_ACTION.equals(first.getActionId()) || first.getSelectedOption() == null) return false;
         String value = first.getSelectedOption().getValue();
         return value != null && (value.startsWith("manage:") || value.startsWith("reassign:") || value.startsWith("title:") || value.startsWith("due:") || value.startsWith("delete:"));

@@ -76,12 +76,25 @@ public class SlackBotConfiguration {
         return new SlackAudioInputService(client, downloader, audio, uploads, executor, bot);
     }
     @Bean SlackHomeService slackHomeService(MethodsClient client, com.meetodo.member.MemberRepository members,
-            TaskRepository tasks, TaskService service, com.meetodo.member.AdminAuthorization admins, Clock clock) {
-        return new SlackHomeService(client, members, tasks, service, admins, clock);
+            TaskRepository tasks, TaskService service, com.meetodo.member.AdminAuthorization admins, Clock clock,
+            com.meetodo.member.registration.MemberRegistrationService registration) {
+        var homes = new SlackHomeService(client, members, tasks, service, admins, clock);
+        homes.setRegistration(registration);
+        return homes;
     }
     @Bean SlackMemberManagementService slackMemberManagementService(MethodsClient client,
             com.meetodo.member.MemberService members, com.meetodo.member.AdminAuthorization admins, Clock clock, SlackHomeService homes) {
         return new SlackMemberManagementService(client, members, admins, clock, homes);
+    }
+    @Bean SlackMemberRegistrationService slackMemberRegistrationService(MethodsClient client,
+            com.meetodo.member.registration.MemberRegistrationService registration, com.meetodo.member.AdminAuthorization admins,
+            SlackHomeService homes, Clock clock) {
+        return new SlackMemberRegistrationService(client, registration, admins, homes, clock);
+    }
+    @Bean SlackRegistrationNotifications slackRegistrationNotifications(MethodsClient client,
+            com.meetodo.member.registration.MemberRegistrationService registration, com.meetodo.member.AdminAuthorization admins,
+            SlackRegistrationMessageRepository messages, PlatformTransactionManager transactions, SlackHomeService homes) {
+        return new SlackRegistrationNotifications(client, registration, admins, messages, transactions, homes);
     }
     @Bean SlackTaskEditService slackTaskEditService(MethodsClient client, SlackBotService bot, TaskService tasks, Clock clock, SlackHomeService homes, com.meetodo.member.AdminAuthorization admins, com.meetodo.member.MemberRepository members) {
         var edits = new SlackTaskEditService(client, bot, tasks, clock);
@@ -89,7 +102,7 @@ public class SlackBotConfiguration {
         edits.setManagement(admins, members);
         return edits;
     }
-    @Bean App slackBoltApp(Environment env, SlackBotService service, ObjectProvider<SlackMeetingInputService> inputs, SlackTaskEditService edits, SlackHomeService homes, SlackMemberManagementService memberManagement, ObjectProvider<SlackAudioInputService> audioInputs) {
+    @Bean App slackBoltApp(Environment env, SlackBotService service, ObjectProvider<SlackMeetingInputService> inputs, SlackTaskEditService edits, SlackHomeService homes, SlackMemberManagementService memberManagement, ObjectProvider<SlackAudioInputService> audioInputs, ObjectProvider<SlackMemberRegistrationService> registrations) {
         App app = new App(AppConfig.builder().singleTeamBotToken(env.getProperty("SLACK_BOT_TOKEN")).build());
         app.event(com.slack.api.model.event.AppHomeOpenedEvent.class, (request, context) -> {
             var ack = context.ack();
@@ -134,6 +147,8 @@ public class SlackBotConfiguration {
             return ack;
         });
         memberManagement.register(app);
+        SlackMemberRegistrationService registration = registrations.getIfAvailable();
+        if (registration != null) registration.register(app);
         edits.register(app);
         SlackMeetingInputService input = inputs.getIfAvailable();
         if (input != null) input.register(app);

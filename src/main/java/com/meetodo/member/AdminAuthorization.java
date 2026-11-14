@@ -15,6 +15,7 @@ public class AdminAuthorization {
                 .filter(value -> value.matches("[UW][A-Z0-9]{1,79}")).collect(Collectors.toUnmodifiableSet());
     }
     public boolean isAdmin(String slackUserId) { return slackUserId != null && admins.contains(slackUserId); }
+    public Set<String> ids() { return admins; }
     public void requireAdmin(String slackUserId) {
         if (!isAdmin(slackUserId)) throw new MemberManagementException(HttpStatus.FORBIDDEN,
                 "ADMIN_REQUIRED", "관리자만 팀원을 관리할 수 있어요.");

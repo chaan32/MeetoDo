@@ -18,7 +18,7 @@ class SlackAudioConfigurationTests {
         when(providers.getIfAvailable()).thenReturn(input);
         var app = new SlackBotConfiguration().slackBoltApp(new MockEnvironment().withProperty("SLACK_BOT_TOKEN", "test-token"),
                 mock(SlackBotService.class), mock(ObjectProvider.class), mock(SlackTaskEditService.class),
-                mock(SlackHomeService.class), mock(SlackMemberManagementService.class), providers);
+                mock(SlackHomeService.class), mock(SlackMemberManagementService.class), providers, mock(ObjectProvider.class));
         verify(input).register(app);
     }
 

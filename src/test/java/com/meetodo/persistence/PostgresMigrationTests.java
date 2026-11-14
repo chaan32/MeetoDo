@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-@SpringBootTest(properties = {"spring.flyway.enabled=true", "spring.jpa.hibernate.ddl-auto=validate"})
+@SpringBootTest(properties = {"spring.flyway.enabled=true", "spring.jpa.hibernate.ddl-auto=validate", "MEETODO_ADMIN_SLACK_IDS=UADMIN,UOTHER"})
 @ActiveProfiles("test")
 @Testcontainers
 class PostgresMigrationTests {
@@ -41,6 +41,7 @@ class PostgresMigrationTests {
     }
     @Autowired JdbcTemplate jdbc;
     @Autowired Flyway flyway;
+    @Autowired com.meetodo.member.registration.MemberRegistrationService registrations;
     @Autowired TaskRepository tasks;
     @Autowired TaskService taskService;
     @Autowired com.meetodo.member.MemberRepository members;
@@ -52,17 +53,17 @@ class PostgresMigrationTests {
     @MockitoBean Clock clock;
 
     @BeforeEach void clean() {
-        jdbc.execute("TRUNCATE slack_audio_uploads, task_events, slack_message_references, task_mentions, tool_call_logs, tasks, daily_digests, meetings, members RESTART IDENTITY CASCADE");
+        jdbc.execute("TRUNCATE member_registration_events, member_registration_requests, slack_audio_uploads, task_events, slack_message_references, task_mentions, tool_call_logs, tasks, daily_digests, meetings, members RESTART IDENTITY CASCADE");
         Clock fixed = Clock.fixed(Instant.parse("2026-11-11T15:00:00Z"), ZoneId.of("Asia/Seoul"));
         when(clock.withZone(ZoneId.of("Asia/Seoul"))).thenReturn(fixed);
         when(clock.instant()).thenReturn(fixed.instant());
     }
 
-    // 검증: 빈 PostgreSQL에 V1/V2/V3/V4/V5/V6/V7/V8/V9/V10을 적용하고 Hibernate가 엔티티 스키마를 검증한다.
+    // 검증: 빈 PostgreSQL에 V1/V2/V3/V4/V5/V6/V7/V8/V9/V10/V11을 적용하고 Hibernate가 엔티티 스키마를 검증한다.
     @Test void appliesInitialMigrationAndValidatesEntities() {
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '1'", String.class)).isEqualTo("1");
         assertThat(jdbc.queryForList("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'", String.class))
-                .contains("members", "meetings", "tasks", "tool_call_logs", "task_mentions", "daily_digests", "slack_message_references", "slack_audio_uploads");
+                .contains("members", "meetings", "tasks", "tool_call_logs", "task_mentions", "daily_digests", "slack_message_references", "slack_audio_uploads", "member_registration_requests", "member_registration_events");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '2'", String.class)).isEqualTo("2");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '3'", String.class)).isEqualTo("3");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '4'", String.class)).isEqualTo("4");
@@ -72,6 +73,7 @@ class PostgresMigrationTests {
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '8'", String.class)).isEqualTo("8");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '9'", String.class)).isEqualTo("9");
         assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '10'", String.class)).isEqualTo("10");
+        assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success AND version = '11'", String.class)).isEqualTo("11");
     }
 
     @Test void memberActiveDefaultsToTrueForExistingInsertContract() {
@@ -550,6 +552,43 @@ class PostgresMigrationTests {
                 .containsEntry("raw_text", "기존 회의").containsEntry("slack_channel_id", "CLEGACY")
                 .containsEntry("slack_message_ts", "9.000001").containsEntry("slack_input_channel_id", null)
                 .containsEntry("slack_input_message_ts", null);
+    }
+
+    @Test void postgresPendingIdentityIsUniqueAndTerminalRowsAllowResubmission() {
+        // PostgreSQL 유니크 제약은 대기 신청 한 건만 허용하고 반려 후에는 같은 ID를 다시 받는다.
+        var first=registrations.submit("UPGAPPLY","김","민수","개발팀");
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO member_registration_requests(slack_user_id,pending_slack_user_id,family_name,given_name,team,status,duplicate_name,created_at) VALUES ('UPGAPPLY','UPGAPPLY','이','지영','디자인팀','PENDING',false,now())"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        registrations.reject(first.id(),"UADMIN","팀 확인 필요");
+        var second=registrations.submit("UPGAPPLY","김","민수","개발팀");
+        assertThat(second.id()).isNotEqualTo(first.id());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM member_registration_events WHERE request_id=?",Long.class,first.id())).isEqualTo(2L);
+    }
+
+    @Test void postgresConcurrentApprovalAndRejectionKeepOneDecisionAndAudit() throws Exception {
+        // 승인/반려 경쟁은 신청 행 잠금으로 최초 처리 하나와 감사 이력 하나만 남긴다.
+        var request=registrations.submit("UPGRACE","김","민수","개발팀");
+        ExecutorService executor=Executors.newFixedThreadPool(2);
+        CountDownLatch start=new CountDownLatch(1);
+        try {
+            var approval=executor.submit(() -> { start.await(); return registrations.approve(request.id(),"UADMIN"); });
+            var rejection=executor.submit(() -> { start.await(); return registrations.reject(request.id(),"UOTHER","반려"); });
+            start.countDown();
+            var first=approval.get(15,TimeUnit.SECONDS); var second=rejection.get(15,TimeUnit.SECONDS);
+            assertThat(first).isEqualTo(second);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM member_registration_events WHERE request_id=?",Long.class,request.id())).isEqualTo(2L);
+            assertThat(members.existsBySlackUserId("UPGRACE")).isEqualTo(first.status()==com.meetodo.member.registration.RegistrationStatus.APPROVED);
+        } finally { executor.shutdownNow(); }
+    }
+
+    @Test void postgresCorrectedApprovalPreservesBothFormsAndActor() {
+        // 수정 승인은 실제 PostgreSQL JSON 문자열 컬럼에도 수정 전후 폼을 보존한다.
+        var request=registrations.submit("UPGEDIT","김","민수","개발팀");
+        registrations.approve(request.id(),"UADMIN","이","지영","디자인팀");
+        var audit=jdbc.queryForMap("SELECT before_form,after_form,by_slack_user_id FROM member_registration_events WHERE request_id=? AND type='APPROVED'",request.id());
+        assertThat(audit.get("before_form").toString()).contains("민수","개발팀");
+        assertThat(audit.get("after_form").toString()).contains("지영","디자인팀");
+        assertThat(audit.get("by_slack_user_id")).isEqualTo("UADMIN");
     }
 
     private void meeting(long id, String hash) {

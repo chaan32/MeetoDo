@@ -98,6 +98,28 @@ class SlackSocketDispatchTests {
         queue.getFirst().run(); assertThat(order).containsExactly("ack", "queued", "audio");
     }
 
+    @Test void registrationRequestOpensImmediatelyAfterWireAck() throws Exception {
+        // 신청 모달 trigger가 대기열에서 만료되지 않는다.
+        assertRegistrationDispatch("meetodo_request_membership");
+    }
+    @Test void registrationEditOpensImmediatelyAfterWireAck() throws Exception {
+        // 수정 승인 모달 trigger가 대기열에서 만료되지 않는다.
+        assertRegistrationDispatch("meetodo_registration_edit");
+    }
+    @Test void registrationRejectionOpensImmediatelyAfterWireAck() throws Exception {
+        // 거절 모달 trigger가 대기열에서 만료되지 않는다.
+        assertRegistrationDispatch("meetodo_registration_reject");
+    }
+    private void assertRegistrationDispatch(String action) throws Exception {
+        var order = new ArrayList<String>(); var client=mock(SocketModeClient.class); var app=mock(App.class);
+        doAnswer(call -> { order.add("ack"); return null; }).when(client).sendSocketModeResponse(any(com.slack.api.socket_mode.response.SocketModeResponse.class));
+        when(app.config()).thenReturn(AppConfig.builder().singleTeamBotToken("test-token").build());
+        when(app.run(any())).thenAnswer(call -> { order.add("opened"); return com.slack.api.bolt.response.Response.builder().statusCode(200).build(); });
+        new SlackSocketDispatch(app, job -> order.add("queued")).receive(client,
+                "{\"type\":\"interactive\",\"envelope_id\":\"E1\",\"payload\":{\"type\":\"block_actions\",\"trigger_id\":\"t\",\"user\":{\"id\":\"U1\"},\"actions\":[{\"type\":\"button\",\"action_id\":\""+action+"\",\"value\":\"7\"}]}}");
+        assertThat(order).containsExactly("ack", "opened");
+    }
+
     private void assertMenuDispatch(String operation, boolean immediate) throws Exception {
         var order = new ArrayList<String>(); var queue = new ArrayList<Runnable>();
         var client = mock(SocketModeClient.class);

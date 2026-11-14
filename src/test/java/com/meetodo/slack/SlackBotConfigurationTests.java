@@ -55,6 +55,16 @@ class SlackBotConfigurationTests {
         assertThat(org.springframework.test.util.ReflectionTestUtils.getField(configuredBot(
                 new MockEnvironment().withProperty("MEETODO_SLACK_DM_ENABLED", "true")), "dmEnabled")).isEqualTo(true);
     }
+    @SuppressWarnings("unchecked")
+    @Test void registrationHandlersAreWiredAlongsideExistingHandlers() {
+        // 실제 구성에서 신규 등록 서비스도 Bolt에 연결한다.
+        var registration=mock(SlackMemberRegistrationService.class);
+        var provider=mock(org.springframework.beans.factory.ObjectProvider.class);when(provider.getIfAvailable()).thenReturn(registration);
+        var app=new SlackBotConfiguration().slackBoltApp(new MockEnvironment().withProperty("SLACK_BOT_TOKEN","test-token"),
+                mock(SlackBotService.class),mock(org.springframework.beans.factory.ObjectProvider.class),mock(SlackTaskEditService.class),
+                mock(SlackHomeService.class),mock(SlackMemberManagementService.class),mock(org.springframework.beans.factory.ObjectProvider.class),provider);
+        verify(registration).register(app);
+    }
     private SlackBotService configuredBot(MockEnvironment env) {
         return new SlackBotConfiguration().slackBotService(mock(MethodsClient.class), env,
                 mock(SlackMessageReferenceRepository.class), mock(com.meetodo.task.TaskRepository.class),

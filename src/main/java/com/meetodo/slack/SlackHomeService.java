@@ -25,6 +25,7 @@ public class SlackHomeService {
     private final TaskService taskService;
     private final AdminAuthorization admins;
     private final Clock clock;
+    private com.meetodo.member.registration.MemberRegistrationService registration;
     private final SlackBotRenderer renderer = new SlackBotRenderer();
     // shortcut: opened Home subscriptions live in this process; use shared storage when running multiple instances.
     private final Set<String> opened = ConcurrentHashMap.newKeySet();
@@ -34,6 +35,8 @@ public class SlackHomeService {
         this.client = client; this.members = members; this.tasks = tasks;
         this.taskService = taskService; this.admins = admins; this.clock = clock;
     }
+
+    public void setRegistration(com.meetodo.member.registration.MemberRegistrationService registration) { this.registration = registration; }
 
     public void publish(String user) {
         if (SlackBotRenderer.mention(user).isEmpty()) return;
@@ -51,9 +54,16 @@ public class SlackHomeService {
                     "type", "button", "action_id", MANAGE_MEMBERS_ACTION,
                     "text", Map.of("type", "plain_text", "text", "👥 팀원 관리"), "value", "members"))));
             Member member = members.findBySlackUserIdAndActiveTrue(user).orElse(null);
-            if (member == null) blocks.add(section(admins.isAdmin(user) && !members.existsByActiveTrue()
-                    ? "먼저 팀원을 등록하세요. 팀원 관리에서 본인과 팀원을 추가할 수 있어요."
-                    : "팀원으로 등록되지 않았어요. 관리자에게 요청해 주세요."));
+            if (member == null) {
+                blocks.add(section(admins.isAdmin(user) && !members.existsByActiveTrue()
+                        ? "먼저 팀원을 등록하세요. 팀원 관리에서 본인과 팀원을 추가할 수 있어요."
+                        : "팀원으로 등록되지 않았어요. 관리자에게 요청해 주세요."));
+                if (registration != null) {
+                    if (registration.pending(user).isPresent()) blocks.add(section("승인 대기 중이에요. 관리자가 확인하면 알려드릴게요."));
+                    else blocks.add(Map.of("type", "actions", "elements", List.of(Map.of("type", "button",
+                            "action_id", SlackMemberRegistrationService.REQUEST, "text", Map.of("type", "plain_text", "text", "내 정보 등록")))));
+                }
+            }
             else renderTasks(blocks, member, user);
             String view = new GsonBuilder().disableHtmlEscaping().create().toJson(Map.of("type", "home", "blocks", blocks));
             var response = client.viewsPublish(ViewsPublishRequest.builder().userId(user).viewAsString(view).build());
