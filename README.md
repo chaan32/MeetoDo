@@ -15,6 +15,7 @@
 - 완료·수정·담당자 변경 후 관련 채널·DM·앱 Home을 DB 기준으로 다시 그립니다. 새 배정은 담당자별 DM으로 묶어 보냅니다.
 - 앱 Home에서 내 할 일과 미정 할 일을 확인하고, 팀원은 본인 등록을 신청해 관리자 승인을 받습니다.
 - 평일 오전 9시(Asia/Seoul) 마감 지남·오늘·3일 이내 업무를 알립니다. 날짜·상태 규칙으로 처리하며 LLM을 사용하지 않습니다.
+- `/meetodo 질문 …`으로 승인된 팀원이 회의 기록을 검색하고, 검증한 출처와 현재 할 일 상태를 확인합니다(선택 활성화, 실제 검색 정확도는 측정 전).
 - 회의별 모델 사용량과 설정 단가에 따른 예상 비용을 조회합니다. 실제 청구액과 일치한다고 보장하지 않습니다.
 
 ## 구조
@@ -31,6 +32,12 @@ flowchart LR
     T -->|도구 결과| L
     T --> DB[(PostgreSQL / Flyway)]
     M --> DB
+    DB -->|커밋 후 색인| V[VectorStore / 임베딩]
+    S -->|명시적 질문| Q[검색·근거 검증]
+    A --> Q
+    Q --> V
+    Q -->|현재 할 일 재조회| DB
+    Q -->|개인 응답| U
     DB -->|커밋 후| N[Notifier / Slack Bot]
     N -->|채널·담당자 DM·Home 갱신| U
 ```
@@ -162,6 +169,91 @@ Swagger `POST /api/meetings`에서는 다음 본문으로 같은 서비스를 �
 - “이번 주/다음 주”는 월~일, “이번 주 안에”는 일요일입니다. `내일/모레`, ISO·짧은 날짜를 서버가 해석하며 원문에 없는 날짜는 거절합니다. `까지/까지는`은 정리하지만 의미가 다른 `전까지`는 지원하지 않습니다.
 - 확정할 수 없는 담당자·날짜는 경고와 함께 비워 둡니다. 과거 날짜는 첫 시도 거절 후에도 과거면 마감일 없이 등록합니다.
 
+## 회의 기록 질문(RAG, 선택 기능)
+
+승인된 활성 팀원은 `/meetodo 질문 결제 API 스펙 담당자와 현재 상태는?`으로 질문합니다. 답은 질문한 사람에게만 보입니다. 일반 `/meetodo` 모달·멘션·음성 입력은 회의 처리 경로로 유지하며 질문 경로는 할 일을 만들지 않습니다. 기존 Slack 권한·이벤트로 동작하므로 이 기능 때문에 앱 재설치는 필요하지 않습니다.
+
+```text
+DONE 회의 커밋 → 별도 작업 큐 → 회의별 청크·연결된 할 일 → 임베딩 → VectorStore
+질문 → 활성 팀원 확인 → 임베딩·상위 5개 검색 → 임계값 검사
+     → 답변 모델 → 문서 ID·회의 ID·인용 검증 → 당시 기록 + DB의 현재 할 일 상태
+```
+
+색인 대상은 **MeetoDo가 처리한 DONE 회의와 연결된 할 일**입니다. Slack 전체 대화나 회의 없이 직접 등록한 할 일은 포함하지 않습니다. 팀 전체 공유 범위이며 채널별 접근 제어는 없습니다. 모델이 선택한 출처가 실제 검색 결과 안에 있는지, 인용문이 공백·줄바꿈만 정규화한 원문에 포함되는지 서버가 확인합니다. 퍼지 매칭과 출처 없는 자유 서술은 답에 쓰지 않습니다. 회의록 인용은 당시 기록으로, 담당자·마감일·상태는 답변 시점 DB에서 읽은 현재 상태로 분리합니다. 할 일 색인 텍스트의 오래된 상태는 공개 인용문으로 쓰지 않습니다.
+
+회의를 섞지 않고 목표 300토큰으로 나눕니다. 유사도 기본값 **0.75는 측정 전 임시값**이며 정확도를 보장하는 기준이 아닙니다. 임계값을 넘는 결과가 없으면 답변 LLM을 부르지 않고 `기록에 없습니다`를 반환합니다(질문 임베딩 호출은 발생할 수 있음). 색인이 준비되지 않았으면 `INDEX_NOT_READY`, 근거 검증에 실패하면 `UNVERIFIED`로 구분합니다. 출처는 등록일과 회의 ID를 표시하며 ‘지난주’ 같은 날짜 해석·검색 필터는 이번 범위에 없습니다.
+
+### 설정과 실행
+
+`.env.example`에 다음 선택 설정이 있습니다. 기본은 RAG 비활성입니다.
+
+```dotenv
+MEETODO_RAG_ENABLED=true
+MEETODO_EMBEDDING_MODEL=text-embedding-3-small
+MEETODO_RAG_CHUNK_TOKENS=300
+MEETODO_RAG_SIMILARITY_THRESHOLD=0.75
+# Docker에서 관리자 재색인 API를 사용할 때만 활성화
+MEETODO_DEV_ENDPOINTS_ENABLED=true
+```
+
+local/H2에서는 Spring AI 메모리 VectorStore를 사용하고 시작할 때 DB에서 다시 색인합니다. 재시작마다 임베딩 비용·준비 시간이 발생하며 인스턴스 간 공유하지 않습니다. Docker에서는 PostgreSQL pgvector에 저장합니다. 벡터 차원은 1536이며 설정한 모델이 dimensions=1536을 지원해야 합니다. 모델·청크 설정 변경 시 전체 재색인하세요. 색인 실패는 회의 DONE을 되돌리지 않으며 실패·사용량은 `RagIndexRun`에 남깁니다. 변경된 할 일과 팀원 정보도 재색인하며 팀원 변경은 전체 재색인이라 추가 비용이 발생할 수 있습니다.
+
+```zsh
+# 키체인 값을 출력하지 않고 환경변수로 전달
+export OPENAI_API_KEY="$(security find-generic-password -a "$USER" -s meetodo-openai -w)"
+export MEETODO_RAG_ENABLED=true
+export MEETODO_EMBEDDING_MODEL=text-embedding-3-small
+export MEETODO_RAG_CHUNK_TOKENS=300
+export MEETODO_RAG_SIMILARITY_THRESHOLD=0.75
+./gradlew bootRun --args='--spring.profiles.active=local,openai'
+```
+
+Slack 질문 확인 시 기존 봇 실행 설정(`MEETODO_SLACK_BOT_ENABLED`, `SLACK_APP_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`)도 유지합니다. Docker는 `.env` 수정 후 `docker compose up -d --build --force-recreate --wait`로 반영합니다. pgvector 이미지 전환 전에는 아래 업그레이드·백업 주의사항을 먼저 확인하세요.
+
+Swagger `/swagger-ui/index.html`에서 활성 팀원의 `X-Slack-User-Id`와 함께 `POST /api/questions`를 호출합니다.
+
+```json
+{"question":"결제 API 스펙 담당자와 현재 상태는?","diagnostic":false}
+```
+
+`diagnostic:true`면 임계값을 무시한 상위 5개 문서 ID·회의 ID·점수를 반환하고 답변 LLM은 호출하지 않습니다. 음수·0 점수도 보존합니다. 이 모드는 임계값 측정용이며 PostgreSQL에서는 해당 namespace 전체를 정확 검색하므로 일반 ANN 검색보다 비용이 클 수 있습니다.
+
+```sh
+# 단일 관리자 Slack ID로 바꿉니다. 승인된 질문자는 별도 활성 Member여야 합니다.
+export MEETODO_ADMIN_ID=U_REPLACE_WITH_ADMIN_ID
+curl -sS -X POST http://localhost:8080/api/dev/rag/reindex \
+  -H "X-Slack-User-Id: $MEETODO_ADMIN_ID"
+# 위 응답의 jobId로 조회: COMPLETED 또는 FAILED까지 확인
+curl -sS http://localhost:8080/api/dev/rag/reindex/JOB_ID \
+  -H "X-Slack-User-Id: $MEETODO_ADMIN_ID"
+curl -sS http://localhost:8080/api/dev/rag/index-status \
+  -H "X-Slack-User-Id: $MEETODO_ADMIN_ID"
+```
+
+`ready:true` 이후 질문합니다. 재색인 API는 local 또는 별도로 켠 docker 데모 엔드포인트에서 관리자만 사용할 수 있습니다. HTTP 헤더의 Slack ID는 인증이 아니므로 외부 공개하지 마세요. 작업 ID·동시 실행 잠금은 프로세스 메모리이며 최근 20개만 보관합니다. 영구 색인 시도 기록은 DB에 남습니다. 작업 큐 포화·프로세스 중단 후 자동 복구는 없으므로 상태 확인 후 직접 재색인해야 합니다.
+
+### 평가: 점수 수집 후 임계값 선택
+
+[평가 스크립트](scripts/evaluate_rag.py)는 Python 3.9+ 표준 라이브러리만 사용합니다. **보존할 데이터가 없는 별도 평가 DB**에서만 `--prepare`를 실행하세요. 회의·할 일이 하나라도 있으면 준비를 거절하며 삭제하지 않습니다. 활성 팀원 3명의 전체 이름이 서로 달라야 하고 질문자도 활성 팀원이어야 합니다. 관리자가 미리 등록하세요. 알림 환경변수를 해제하고 서버를 재시작해 회의 응답의 알림 상태가 SKIPPED가 되게 합니다. 실제 OpenAI 호출·비용이 발생합니다.
+
+```sh
+# 준비: 4개 회의·할 일과 평가 기준을 만들고 재색인합니다.
+python3 scripts/evaluate_rag.py --actor "$MEETODO_ADMIN_ID" --prepare --mode scores
+# 기존 fixture를 사용해 점수만 수집: 답변 LLM 미호출
+python3 scripts/evaluate_rag.py --actor "$MEETODO_ADMIN_ID" --mode scores
+# 답 있음/없음 점수 분포를 보고 직접 임계값을 설정한 뒤 서버 재시작
+# MEETODO_RAG_SIMILARITY_THRESHOLD=<직접 선택한 값>
+python3 scripts/evaluate_rag.py --actor "$MEETODO_ADMIN_ID" --mode evaluate
+```
+
+질문자와 관리자가 다르면 `--admin`, 팀원을 지정하려면 `--member-ids`, 서버가 다르면 `--base-url`을 사용합니다. 기본 결과·fixture 경로는 저장소 밖 `/tmp/meetodo-rag-eval`이며 `--manifest`, `--output-dir`로 바꿀 수 있습니다. `--prepare` 없이 실행하면 저장된 fixture만 사용합니다. 준비 중 결과가 기대와 다르면 SETUP_FAILED로 남기며 자동 수정·재시도하지 않습니다.
+
+평가 질문 10개는 답 있음 7개·없음 3개이며 최소 3개는 실제 팀원 이름으로 묻습니다. 답·출처·없음 판정, 서버 처리 시간·HTTP 시간, 호출 수·사용량과 원본 응답을 기록합니다. 자동 채점은 정해 둔 할 일 상태와 출처를 엄격 비교하므로 회의 인용만으로 답한 경우 수동 확인이 필요합니다. 이름 검색 실패도 결과로 남기며 이번 범위에서는 검색을 조정하지 않습니다. **실제 RAG 평가 결과와 임계값은 아직 측정 전**입니다. 이 10문항은 초기 평가 세트이며 일반 정확도를 증명하지 않습니다.
+
+질문·색인은 각각 `Question.usage_report`, `RagIndexRun.usage_report`에 기록하고 기존 회의 처리 사용량에 섞지 않습니다. 임베딩 단가는 `MEETODO_PRICE_EMBEDDING_MODEL`, `MEETODO_PRICE_EMBEDDING_INPUT_PER_MILLION`(USD/100만 입력 토큰)로 설정합니다. 실제 응답 모델과 정확히 일치해야 하며 미설정은 `PRICE_NOT_CONFIGURED`, 공급자 사용량 미제공은 `USAGE_UNAVAILABLE`로 비용을 null 처리합니다. 토큰 합계와 예상 비용을 청구서와 동일한 값으로 간주하지 않습니다.
+
+근거: 설치된 Spring AI 1.1.8의 `PgVectorStore`, `SimpleVectorStore`, `TokenTextSplitter`, `OpenAiEmbeddingModel` 소스를 확인했습니다. [1.1.8 PgVectorStore 소스](https://github.com/spring-projects/spring-ai/blob/v1.1.8/vector-stores/spring-ai-pgvector-store/src/main/java/org/springframework/ai/vectorstore/pgvector/PgVectorStore.java), [OpenAI 임베딩 공식 문서](https://developers.openai.com/api/docs/guides/embeddings), [Slack 명령 응답 공식 문서](https://docs.slack.dev/tools/java-slack-sdk/guides/slash-commands/)를 참고했습니다.
+
 ## 사용량과 비용
 
 서버 운영비와 OpenAI API 사용료는 설치자가 부담합니다. 현재 실측 금액은 없어 금액 예시는 제시하지 않습니다. `usage`에는 호출별 모델·입력/출력/합계 토큰, 음성 응답이 제공한 토큰 또는 초 단위 길이, 합계와 예상 USD 비용을 담습니다. 공급자 사용량이 없으면 0으로 만들지 않습니다.
@@ -185,6 +277,9 @@ Swagger `POST /api/meetings`에서는 다음 본문으로 같은 서비스를 �
 공식 근거: [Spring AI ChatResponse metadata](https://docs.spring.io/spring-ai/reference/api/chatmodel.html), [OpenAI 전사 응답](https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create). 구현에서는 설치된 Spring AI 1.1.8의 `ChatResponseMetadata`, `EmptyUsage`, `OpenAiChatModel`, `OpenAiAudioApi.createTranscription` 소스도 확인했습니다.
 
 ## 운영·업그레이드·백업
+
+RAG 도입으로 Compose 이미지를 `postgres:16-alpine`에서 `pgvector/pgvector:0.8.7-pg16`으로 바꿨습니다. 변경 전에 이미지의 PG_MAJOR를 확인했으며 둘 다 **16**(기존 16.15, 새 이미지 16.16)이었습니다. 메이저는 같지만 Alpine→Debian 기반 변경이 있어 실제 볼륨 업그레이드의 호환성까지 확인한 것은 아닙니다. 먼저 아래 논리 백업과 별도 복원 검증을 수행하세요. 앱을 중지한 뒤 새 PostgreSQL 이미지를 기동하고 앱을 올립니다. PostgreSQL Testcontainers로 pgvector 스키마와 기존 행 보존 마이그레이션을 검증했으며 실제 사용자 DB는 변경하지 않았습니다. 이전 pgvector 없는 이미지로 새 마이그레이션을 실행하지 마세요.
+
 
 ```sh
 # 로그 / 종료: 볼륨 데이터는 유지
@@ -281,14 +376,14 @@ C의 미정 경로는 당시 정책상 필수인 `findTasks`를 모델이 3회 �
 ## 개발·테스트
 
 ```sh
-# Java 21, Docker(Testcontainers) 필요. 외부 Slack/OpenAI는 mock입니다.
+# Java 21, Docker(Testcontainers), Python 3.9+(평가 스크립트 테스트) 필요. 외부 Slack/OpenAI는 mock입니다.
 ./gradlew test bootJar --no-daemon
 
 # 키 없는 로컬 개발: H2 파일 DB / 개발 샘플 팀원
 ./gradlew bootRun
 ```
 
-local은 H2 파일, test는 H2 메모리, docker는 PostgreSQL + Flyway + validate를 사용합니다. PostgreSQL Testcontainers로 마이그레이션·행 잠금·유니크 경쟁과 H2에서 보이지 않던 text/OID 차이를 확인합니다. 재현 테스트는 수정 전 실패를 확인하고 실제 모델의 잘못된 인자·여분 필드·조사까지 mock으로 검증합니다. 테스트 통과가 실제 모델의 정확성을 보장하지는 않습니다. 현재 전체 `test bootJar` 검증은 **1,196개 / 실패·오류·건너뜀 0**이며 실제 Slack/OpenAI는 테스트에서 호출하지 않았습니다.
+local은 H2 파일, test는 H2 메모리, docker는 PostgreSQL + Flyway + validate를 사용합니다. PostgreSQL Testcontainers로 마이그레이션·행 잠금·유니크 경쟁과 H2에서 보이지 않던 text/OID 차이를 확인합니다. 재현 테스트는 수정 전 실패를 확인하고 실제 모델의 잘못된 인자·여분 필드·조사까지 mock으로 검증합니다. 테스트 통과가 실제 모델의 정확성을 보장하지는 않습니다. 현재 전체 `test bootJar` 검증은 **1,353개 / 실패·오류·건너뜀 0**이며 실제 Slack/OpenAI는 테스트에서 호출하지 않았습니다. 전체 검증에는 평가 스크립트의 오프라인 Python 테스트31개를 실행하는 JUnit 검증도 포함됩니다.
 
 ## 데이터·보안
 
@@ -298,6 +393,7 @@ local은 H2 파일, test는 H2 메모리, docker는 PostgreSQL + Flyway + valida
 
 ## 알려진 한계
 
+- RAG 출처 검증은 검색 결과 포함·인용 일치를 확인하며 문장의 의미상 정답을 보장하지 않습니다. 이름 검색·유사도 임계값은 실제 평가 전입니다. 팀 전체 공유이며 채널별 권한·날짜 해석/필터는 없습니다. local 메모리 색인은 재시작마다 비용이 들고 공유되지 않습니다.
 - REST 인증 없음. `X-Slack-User-Id`는 본인 증명이 아니며 공개 서비스에 사용할 수 없습니다. 클라우드 배포·부하 테스트는 하지 않았습니다.
 - 팀 언급 검증은 정규화한 문자열 포함 여부입니다. “지영은 디자인 시안을 검토한다”의 디자인이 팀명으로 인정될 수 있고 다른 맥락의 팀 언급도 통과할 수 있습니다. 약칭은 미지원입니다.
 - 한 회의에서 같은 이름의 서로 다른 사람을 다루면 보수적 가드가 배정을 제한할 수 있습니다. 모델이 추출해 `findMember`에 넣은 이름 자체가 정확하다고 보장하지 않습니다. 서버는 님/씨만 정리하고 직급·조사는 모델이 추출합니다. 같은 회의 앞 문장에서 팀이 밝혀진 같은 이름은 같은 사람으로 보는 정책이 있어 실제로 다른 동명이인이라면 오배정 가능성이 있습니다.
